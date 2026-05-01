@@ -1,0 +1,32 @@
+{
+  "project_name": "200 Vesey Test Study",
+  "address": "200 Vesey Street, New York, NY",
+  "program_type": "office repositioning",
+  "total_sf": 0,
+  "geography": "New York, NY",
+  "amenity_priorities": [
+    "fitness_wellness",
+    "food_beverage",
+    "outdoor_space",
+    "conference_event",
+    "public_realm"
+  ],
+  "comp_types": [
+    "adaptive reuse",
+    "premium workplace",
+    "public realm adjacency"
+  ],
+  "radius_miles": 3.0,
+  "time_horizon_years": 8,
+  "audience": "internal workflow test",
+  "filters": {
+    "asset_scale": "large urban commercial",
+    "delivery_status": "built or announced",
+    "quality_band": "upper market"
+  },
+  "presentation_priorities": [
+    "confirm the package structure works for a real Manhattan test address",
+    "surface which fields still require live research or manual confirmation",
+    "identify the next provider, source, and QA steps before client-facing use"
+  ]
+}

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comp-agent"
+version = "0.1.0"
+description = "Concept-level comps research package generator for presentations."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "python-pptx>=0.6.23",
+  "Pillow>=9.0.0",
+]
+
+[project.scripts]
+comp-agent = "comp_agent.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

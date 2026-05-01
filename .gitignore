@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.env
+projects/
+projects_ui/
+projects_*_server*.log
+tmp_*.pptx
+*.log

@@ -1,0 +1,32 @@
+{
+  "project_name": "Competition Study",
+  "address": "230 Vesey St, New York, NY 10281",
+  "program_type": "office repositioning",
+  "total_sf": 2100000,
+  "geography": "New York, NY",
+  "amenity_priorities": [
+    "fitness_wellness",
+    "food_beverage",
+    "outdoor_space",
+    "conference_event",
+    "public_realm"
+  ],
+  "comp_types": [
+    "adaptive reuse",
+    "premium workplace",
+    "public realm adjacency"
+  ],
+  "radius_miles": 3.0,
+  "time_horizon_years": 8,
+  "audience": "concept presentation",
+  "filters": {
+    "asset_scale": "large urban commercial",
+    "delivery_status": "built or announced",
+    "quality_band": "upper market"
+  },
+  "presentation_priorities": [
+    "clear precedent relevance",
+    "defensible source trail",
+    "tables and graphics that can be dropped into a pitch deck"
+  ]
+}

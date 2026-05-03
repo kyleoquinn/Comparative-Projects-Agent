@@ -16,8 +16,12 @@ class ProjectBrief:
     program_type: str
     total_sf: int | None = None
     amenity_priorities: list[str] = field(default_factory=list)
+    design_priorities: list[str] = field(default_factory=list)
     geography: str = "unknown"
+    scope_summary: str = ""
     comp_types: list[str] = field(default_factory=list)
+    comp_guidance: str = ""
+    must_include_comps: list[dict[str, str]] = field(default_factory=list)
     radius_miles: float = 5.0
     time_horizon_years: int = 10
     audience: str = "concept presentation"
@@ -26,26 +30,77 @@ class ProjectBrief:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectBrief":
-        comp_types = payload.get("comp_types") or payload.get("comp_type") or []
-        if isinstance(comp_types, str):
-            comp_types = [comp_types]
+        comp_inputs = _comparative_project_inputs(payload)
+        comp_types = comp_inputs.get("comp_types") or payload.get("comp_types") or payload.get("comp_type") or []
         priorities = payload.get("presentation_priorities") or []
         if isinstance(priorities, str):
             priorities = [priorities]
+        amenity_priorities = _as_string_list(payload.get("amenity_priorities") or payload.get("design_priorities") or [])
+        design_priorities = _as_string_list(payload.get("design_priorities") or amenity_priorities)
         return cls(
             project_name=str(payload["project_name"]),
             address=str(payload["address"]),
             program_type=str(payload["program_type"]),
             total_sf=int(payload["total_sf"]) if payload.get("total_sf") not in (None, "") else None,
-            amenity_priorities=[str(item) for item in payload.get("amenity_priorities", [])],
+            amenity_priorities=amenity_priorities,
+            design_priorities=design_priorities,
             geography=str(payload.get("geography") or payload.get("market") or "unknown"),
-            comp_types=[str(item) for item in comp_types],
+            scope_summary=str(payload.get("scope_summary") or ""),
+            comp_types=_as_string_list(comp_types),
+            comp_guidance=str(comp_inputs.get("comp_guidance") or payload.get("comp_guidance") or ""),
+            must_include_comps=_as_comp_list(comp_inputs.get("must_include_comps") or payload.get("must_include_comps") or []),
             radius_miles=float(payload.get("radius_miles", 5.0)),
             time_horizon_years=int(payload.get("time_horizon_years", 10)),
             audience=str(payload.get("audience", "concept presentation")),
             filters=dict(payload.get("filters") or {}),
             presentation_priorities=[str(item) for item in priorities],
         )
+
+
+def _comparative_project_inputs(payload: dict[str, Any]) -> dict[str, Any]:
+    agent_inputs = payload.get("agent_inputs") if isinstance(payload.get("agent_inputs"), dict) else {}
+    nested = agent_inputs.get("comparative_projects") if isinstance(agent_inputs.get("comparative_projects"), dict) else {}
+    direct = payload.get("comparative_projects") if isinstance(payload.get("comparative_projects"), dict) else {}
+    return {**direct, **nested}
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _as_comp_list(value: Any) -> list[dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        rows = []
+        for line in value.splitlines():
+            parts = [part.strip() for part in line.split("|")]
+            if parts and parts[0]:
+                rows.append({"name": parts[0], "location": parts[1] if len(parts) > 1 else "", "note": parts[2] if len(parts) > 2 else ""})
+        return rows
+    comps = []
+    for item in value:
+        if isinstance(item, str):
+            parsed = _as_comp_list(item)
+            comps.extend(parsed)
+            continue
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("comp_name") or item.get("project_name") or "").strip()
+        if not name:
+            continue
+        comps.append(
+            {
+                "name": name,
+                "location": str(item.get("location") or "").strip(),
+                "note": str(item.get("note") or item.get("reason") or item.get("guidance") or "").strip(),
+            }
+        )
+    return comps
 
 
 @dataclass(slots=True)

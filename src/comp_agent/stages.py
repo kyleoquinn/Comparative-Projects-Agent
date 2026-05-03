@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,9 @@ from comp_agent.models import (
 from comp_agent.research import CompResearchAgent
 from comp_agent.sources import archive_source_documents
 from comp_agent.workspace import ProjectWorkspace, slugify, write_csv, write_json
+
+
+DEFAULT_RESEARCH_CONCURRENCY = 3
 
 
 def _load_json(path: str | Path) -> Any:
@@ -166,9 +171,6 @@ class CompAppStages:
 
         raw_folder = workspace.data / "raw_research"
         raw_folder.mkdir(parents=True, exist_ok=True)
-        records: list[CompRecord] = []
-        facts_by_comp: dict[str, list[ExtractedFact]] = {}
-
         candidate_path = workspace.data / "candidate_comps.json"
         candidate_map: dict[str, CompCandidate] = {}
         if candidate_path.exists():
@@ -176,9 +178,6 @@ class CompAppStages:
         source_log_path = workspace.data / "source_log.json"
         source_log_items = _load_json(source_log_path) if source_log_path.exists() else []
         search_provider = self.agent.search_provider
-        enriched_snapshots: list[dict[str, Any]] = []
-        repaired_snapshots: list[dict[str, Any]] = []
-        repair_notes: list[dict[str, Any]] = []
 
         def approved_candidate(item: dict[str, Any]) -> CompCandidate:
             comp_id = str(item["comp_id"])
@@ -194,7 +193,7 @@ class CompAppStages:
                 source_notes=["Approved candidate was missing from candidate_comps.json."],
             )
 
-        def add_candidate_record(candidate: CompCandidate) -> None:
+        def candidate_record_and_facts(candidate: CompCandidate) -> tuple[CompRecord, list[ExtractedFact]]:
             attrs = candidate.known_attributes
             candidate_sources = attrs.get("_sources") if isinstance(attrs.get("_sources"), list) else []
             source_count = len(candidate_sources)
@@ -222,7 +221,6 @@ class CompAppStages:
                     "Created from approved-comp evidence package; source facts should be spot-checked before final client use.",
                 ],
             )
-            records.append(record)
             facts = [
                 ExtractedFact(
                     comp_id=record.comp_id,
@@ -251,10 +249,9 @@ class CompAppStages:
                         notes="Source supplied by evidence package output.",
                     )
                 )
-            facts_by_comp[record.comp_id] = facts
-            write_json(raw_folder / f"{record.comp_id}.json", facts)
+            return record, facts
 
-        for item in approved_items:
+        def research_approved_item(index: int, item: dict[str, Any]) -> dict[str, Any]:
             comp_id = str(item["comp_id"])
             candidate = approved_candidate(item)
             working_candidate = candidate
@@ -268,7 +265,6 @@ class CompAppStages:
                     enrichment = None
                     enrichment_warnings.append(str(error))
                 if enrichment:
-                    source_log_items.extend(enrichment.source_log)
                     enrichment_warnings.extend(enrichment.warnings)
                     if enrichment.candidates:
                         working_candidate = _merge_candidate_evidence(candidate, enrichment.candidates[0])
@@ -278,7 +274,7 @@ class CompAppStages:
             elif working_candidate.status != "source_snapshot":
                 working_candidate.source_notes.append("Live enrichment unavailable; retaining approved discovery data.")
 
-            enriched_snapshots.append(_candidate_snapshot(working_candidate, stage="enriched", warnings=enrichment_warnings))
+            enriched_snapshot = _candidate_snapshot(working_candidate, stage="enriched", warnings=enrichment_warnings)
 
             missing_before = _candidate_missing_fields(working_candidate)
             repair_attempted = bool(search_provider and missing_before)
@@ -289,7 +285,6 @@ class CompAppStages:
                     repair = None
                     repair_warnings.append(str(error))
                 if repair:
-                    source_log_items.extend(repair.source_log)
                     repair_warnings.extend(repair.warnings)
                     if repair.candidates:
                         working_candidate = _merge_candidate_evidence(working_candidate, repair.candidates[0])
@@ -298,19 +293,51 @@ class CompAppStages:
                         working_candidate.source_notes.extend(f"Live repair warning: {warning}" for warning in repair.warnings)
 
             missing_after = _candidate_missing_fields(working_candidate)
+            repaired_snapshot = _candidate_snapshot(working_candidate, stage="repaired", warnings=repair_warnings, missing_fields=missing_after)
+            repair_note = {
+                "comp_id": comp_id,
+                "project_name": working_candidate.comp_name,
+                "missing_fields_before_repair": missing_before,
+                "missing_fields_after_repair": missing_after,
+                "repair_attempted": repair_attempted,
+                "repair_warnings": repair_warnings,
+            }
+            record, facts = candidate_record_and_facts(working_candidate)
+            return {
+                "index": index,
+                "comp_id": comp_id,
+                "candidate": working_candidate,
+                "enriched_snapshot": enriched_snapshot,
+                "repaired_snapshot": repaired_snapshot,
+                "repair_note": repair_note,
+                "record": record,
+                "facts": facts,
+                "source_log": [
+                    *(_safe_source_log(enrichment) if "enrichment" in locals() and enrichment else []),
+                    *(_safe_source_log(repair) if "repair" in locals() and repair else []),
+                ],
+            }
+
+        results = _run_parallel_research(approved_items, research_approved_item, _research_concurrency())
+
+        records: list[CompRecord] = []
+        facts_by_comp: dict[str, list[ExtractedFact]] = {}
+        enriched_snapshots: list[dict[str, Any]] = []
+        repaired_snapshots: list[dict[str, Any]] = []
+        repair_notes: list[dict[str, Any]] = []
+        for result in results:
+            comp_id = result["comp_id"]
+            working_candidate = result["candidate"]
             candidate_map[comp_id] = working_candidate
-            repaired_snapshots.append(_candidate_snapshot(working_candidate, stage="repaired", warnings=repair_warnings, missing_fields=missing_after))
-            repair_notes.append(
-                {
-                    "comp_id": comp_id,
-                    "project_name": working_candidate.comp_name,
-                    "missing_fields_before_repair": missing_before,
-                    "missing_fields_after_repair": missing_after,
-                    "repair_attempted": repair_attempted,
-                    "repair_warnings": repair_warnings,
-                }
-            )
-            add_candidate_record(working_candidate)
+            source_log_items.extend(result["source_log"])
+            enriched_snapshots.append(result["enriched_snapshot"])
+            repaired_snapshots.append(result["repaired_snapshot"])
+            repair_notes.append(result["repair_note"])
+            record = result["record"]
+            facts = result["facts"]
+            records.append(record)
+            facts_by_comp[record.comp_id] = facts
+            write_json(raw_folder / f"{record.comp_id}.json", facts)
 
         if candidate_path.exists():
             write_json(candidate_path, [asdict(candidate) for candidate in candidate_map.values()])
@@ -478,7 +505,9 @@ class CompAppStages:
         approved_path = workspace.data / "approved_comps.json"
         if not candidate_path.exists() or not approved_path.exists():
             self.approve(brief, limit=1)
-        candidates = [_candidate_from_dict(item) for item in _load_json(candidate_path)]
+        repaired_path = workspace.data / "repaired_comps.json"
+        candidate_source_path = repaired_path if repaired_path.exists() else candidate_path
+        candidates = [_candidate_from_dict(item) for item in _load_json(candidate_source_path)]
         approved_ids = {str(item["comp_id"]) for item in _load_json(approved_path)}
         approved_candidates = [item for item in candidates if item.comp_id in approved_ids] or candidates[:1]
         criteria = self.agent.build_criteria(brief)
@@ -518,6 +547,7 @@ class CompAppStages:
                 image_manifest_path = download_hero_images(deck_data, images_dir)
                 image_manifest = _load_json(image_manifest_path) if image_manifest_path.exists() else image_manifest
                 audit_items, field_tasks = _audit_deck_data(deck_data, image_manifest)
+        image_manifest_json_path = write_json(json_dir / "image_manifest.json", image_manifest)
         write_json(json_dir / "deck_audit.json", audit_items)
         write_json(json_dir / "field_repair_tasks.json", field_tasks)
         write_json(json_dir / "field_repair_results.json", field_results)
@@ -540,6 +570,7 @@ class CompAppStages:
             "deck_audit": str(json_dir / "deck_audit.json"),
             "field_repair_tasks": str(json_dir / "field_repair_tasks.json"),
             "field_repair_results": str(json_dir / "field_repair_results.json"),
+            "image_manifest": str(image_manifest_json_path),
             "images": str(images_dir),
             "json": str(json_dir),
         }
@@ -557,6 +588,7 @@ class CompAppStages:
             "deck_audit": json_dir / "deck_audit.json",
             "field_repair_tasks": json_dir / "field_repair_tasks.json",
             "field_repair_results": json_dir / "field_repair_results.json",
+            "image_manifest": image_manifest_json_path,
             "output_manifest": write_json(workspace.data / "output_manifest.json", manifest),
         }
 
@@ -681,7 +713,7 @@ def _candidate_missing_fields(candidate: CompCandidate) -> list[str]:
         fields.append("defining_move")
     if _is_blank(attrs.get("relevance_to_subject")) and (_is_blank(attrs.get("presentation_takeaway")) or _is_placeholder_value(attrs.get("presentation_takeaway"))):
         fields.append("relevance_statement")
-    if len(attrs.get("_sources") if isinstance(attrs.get("_sources"), list) else []) < 1:
+    if len(attrs.get("_sources") if isinstance(attrs.get("_sources"), list) else []) < 3:
         fields.append("primary_sources")
     if _image_candidate_count(attrs) < 3:
         fields.append("image_candidate_coverage")
@@ -735,12 +767,38 @@ def _is_placeholder_value(value: Any) -> bool:
 
 
 def _field_repair_limit() -> int:
-    import os
-
     try:
         return max(0, int(os.getenv("COMP_AGENT_FIELD_REPAIR_LIMIT", "4")))
     except ValueError:
         return 4
+
+
+def _research_concurrency() -> int:
+    try:
+        return max(1, int(os.getenv("COMP_AGENT_RESEARCH_CONCURRENCY", str(DEFAULT_RESEARCH_CONCURRENCY))))
+    except ValueError:
+        return DEFAULT_RESEARCH_CONCURRENCY
+
+
+def _run_parallel_research(
+    approved_items: list[dict[str, Any]],
+    worker,
+    concurrency: int,
+) -> list[dict[str, Any]]:
+    if concurrency <= 1 or len(approved_items) <= 1:
+        return [worker(index, item) for index, item in enumerate(approved_items)]
+
+    max_workers = min(concurrency, len(approved_items))
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(worker, index, item) for index, item in enumerate(approved_items)]
+        for future in as_completed(futures):
+            results.append(future.result())
+    return sorted(results, key=lambda item: int(item["index"]))
+
+
+def _safe_source_log(result: Any) -> list[Any]:
+    return list(getattr(result, "source_log", []) or [])
 
 
 def _audit_deck_data(deck_data: dict[str, Any], image_manifest: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -762,7 +820,7 @@ def _audit_deck_data(deck_data: dict[str, Any], image_manifest: list[dict[str, A
             ("architect_designer", not _is_blank(comp.get("architect_designer")), "Architect / Designer is missing"),
             ("relevance_to_subject", not _is_blank(comp.get("relevance_to_subject")), "Relevance statement is missing"),
             ("defining_move", not _is_blank(comp.get("defining_move")), "Defining move is missing"),
-            ("primary_sources", len(comp.get("primary_sources") or []) >= 1, "Primary source coverage is low"),
+            ("primary_sources", len(comp.get("primary_sources") or []) >= 3, "Primary source coverage is low"),
         ]
         for field, passed, issue in checks:
             audit_items.append(
@@ -834,10 +892,10 @@ def _apply_field_repair(deck_data: dict[str, Any], task: dict[str, Any], result:
     elif field == "primary_sources":
         sources = result.get("sources") if isinstance(result.get("sources"), list) else []
         if sources and not comp.get("primary_sources"):
-            comp["primary_sources"] = sources[:4]
+            comp["primary_sources"] = sources[:3]
     sources = result.get("sources") if isinstance(result.get("sources"), list) else []
     if sources:
-        comp["primary_sources"] = _merge_sources(comp.get("primary_sources"), sources)[:4]
+        comp["primary_sources"] = _merge_sources(comp.get("primary_sources"), sources)[:3]
 
 
 def _field_repair_has_image_candidates(result: dict[str, Any]) -> bool:

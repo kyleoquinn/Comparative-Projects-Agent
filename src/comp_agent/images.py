@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import imghdr
 import io
 import urllib.error
 import urllib.parse
@@ -19,6 +18,16 @@ MAX_PAGE_BYTES = 2 * 1024 * 1024
 SOURCE_PAGE_LIMIT = 3
 IMAGE_CANDIDATE_LIMIT = 18
 IMAGE_CANDIDATES_PER_PAGE = 10
+
+
+def _detect_image_kind(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    return None
 
 
 class _ImageLinkParser(HTMLParser):
@@ -447,7 +456,7 @@ def _download_image(url: str, base_path: Path) -> Path:
         raise RuntimeError(str(error)) from error
     if len(data) > MAX_IMAGE_BYTES:
         raise RuntimeError("Image exceeded size limit.")
-    kind = imghdr.what(None, data)
+    kind = _detect_image_kind(data)
     if kind == "jpeg":
         suffix = ".jpg"
     elif kind == "png":

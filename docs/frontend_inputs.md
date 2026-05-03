@@ -1,6 +1,6 @@
 # Frontend Inputs
 
-The frontend should collect enough information to let the Comp Agent understand the subject project, discover candidate comps, and tune the deck strategy. The UI can be polished separately; this document is the functional input contract.
+The frontend should collect enough information to let the Comp Agent understand the subject project, discover candidate comps, and tune the deck strategy. Manual entry and RFP autofill should fill the same project brief fields.
 
 ## Required Inputs
 
@@ -15,25 +15,45 @@ The frontend should collect enough information to let the Comp Agent understand 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `project_name` | string | Optional display name. If omitted, address can drive the deck subtitle. |
+| `scope_summary` | string | Plain-language summary of the work being studied. |
+| `design_priorities` | string or string[] | Design or business priorities, such as arrival experience, tenant amenities, public realm, or retail activation. |
 | `max_comps` | number | Target number of candidate comps to return for approval. |
-| `comp_types` | string or string[] | Comparable lanes, such as `podium renovation`, `adaptive reuse`, `public realm`, `luxury residential`. |
-| `amenity_priorities` | string or string[] | Design or program priorities. These are used for discovery, deck strategy, adaptive facts, and the matrix. |
 | `radius_miles` | number | Optional geographic radius. |
 | `time_horizon_years` | number | Optional completion/status time window. |
-| `user_defined_comps` | string | Newline-separated user comps. See format below. |
-| `auto_approve_user_comps` | boolean | If true, user-defined comps can be preselected in the approval UI. |
 | `output_root` | string | Server-side output root. Use a backend-approved path in production. |
 
-## User-Defined Comps Format
+## Comparative Projects Inputs
 
-The temporary UI accepts newline-separated rows:
+The production frontend should send comp-specific guidance inside `comparative_projects`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `comparative_projects.comp_guidance` | string | Natural-language steering for what makes a good comp. |
+| `comparative_projects.comp_types` | string[] | Comparable lanes, such as `podium renovation`, `adaptive reuse`, `public realm`, or `luxury residential`. |
+| `comparative_projects.must_include_comps` | object[] | Comps the user wants included in the approval list. |
+
+## Must-Use Comps Format
+
+The proof-of-concept UI accepts newline-separated rows:
 
 ```text
 660 Fifth Avenue | New York, NY | Office lobby precedent
 343 Madison | New York, NY | Office tower repositioning precedent
 ```
 
-The backend treats these as starter hints only. Approved user-defined comps still go through enrichment, repair, image validation, audit, and deck generation.
+The future frontend can send the same information as structured objects:
+
+```json
+[
+  {
+    "name": "660 Fifth Avenue",
+    "location": "New York, NY",
+    "note": "Office lobby precedent"
+  }
+]
+```
+
+Must-use comps are added to the agent's suggested candidate list, duplicates are merged, and the user still approves the final list before deeper research.
 
 ## Input Behavior
 

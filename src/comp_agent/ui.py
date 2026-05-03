@@ -118,34 +118,28 @@ def _handler_for(default_output_root: str):
 
 
 def _brief_from_payload(payload: dict[str, Any]) -> ProjectBrief:
-    comp_types = payload.get("comp_types") or []
-    if isinstance(comp_types, str):
-        comp_types = [item.strip() for item in comp_types.split(",") if item.strip()]
-    amenity_priorities = payload.get("amenity_priorities") or []
-    if isinstance(amenity_priorities, str):
-        amenity_priorities = [item.strip() for item in amenity_priorities.split(",") if item.strip()]
     filters = dict(payload.get("filters") or {})
     max_comps = payload.get("max_comps")
     if max_comps not in (None, ""):
         filters["max_comps"] = int(max_comps)
-    return ProjectBrief(
-        project_name=str(payload.get("project_name") or "Comp Search Test"),
-        address=str(payload.get("address") or ""),
-        program_type=str(payload.get("program_type") or "office repositioning"),
-        total_sf=int(payload["total_sf"]) if payload.get("total_sf") not in (None, "") else None,
-        geography=str(payload.get("geography") or "New York, NY"),
-        comp_types=[str(item) for item in comp_types],
-        amenity_priorities=[str(item) for item in amenity_priorities],
-        radius_miles=float(payload.get("radius_miles") or 3),
-        time_horizon_years=int(payload.get("time_horizon_years") or 8),
-        audience=str(payload.get("audience") or "client presentation"),
-        filters=filters,
-        presentation_priorities=[
+    normalized = {
+        **payload,
+        "project_name": payload.get("project_name") or "Comp Search Test",
+        "address": payload.get("address") or "",
+        "program_type": payload.get("program_type") or "office repositioning",
+        "geography": payload.get("geography") or "New York, NY",
+        "radius_miles": payload.get("radius_miles") or 3,
+        "time_horizon_years": payload.get("time_horizon_years") or 8,
+        "audience": payload.get("audience") or "client presentation",
+        "filters": filters,
+        "presentation_priorities": payload.get("presentation_priorities")
+        or [
             "source-backed comp selection",
             "contract data extraction",
             "presentation-ready precedent story",
         ],
-    )
+    }
+    return ProjectBrief.from_dict(normalized)
 
 
 def _run_discover(payload: dict[str, Any], default_output_root: str, update: JobUpdate | None = None) -> dict[str, Any]:
@@ -155,15 +149,15 @@ def _run_discover(payload: dict[str, Any], default_output_root: str, update: Job
 
     progress("Preparing project brief", 5)
     brief = _brief_from_payload(payload)
-    user_defined_comps = _parse_user_defined_comps(str(payload.get("user_defined_comps") or ""))
-    if user_defined_comps:
+    must_include_comps = _must_include_comps_for_discovery(brief, str(payload.get("user_defined_comps") or ""))
+    if must_include_comps:
         brief.filters["excluded_user_defined_comps"] = [
             {
                 "name": item["name"],
                 "location": item["location"],
                 "note": item["note"],
             }
-            for item in user_defined_comps
+            for item in must_include_comps
         ]
     output_root = str(payload.get("output_root") or default_output_root)
 
@@ -186,7 +180,7 @@ def _run_discover(payload: dict[str, Any], default_output_root: str, update: Job
 
     progress("Preparing approval list", 82)
     candidates = _read_json_file(paths["candidate_comps"])
-    candidates = _merge_user_defined_candidates(brief, candidates, str(payload.get("user_defined_comps") or ""))
+    candidates = _merge_user_defined_candidates(brief, candidates, must_include_comps)
     if candidates:
         progress("Saving candidate comps", 88)
         paths["candidate_comps"] = write_json(paths["candidate_comps"], candidates)
@@ -355,9 +349,23 @@ def _select_output_folder() -> str:
         return ""
 
 
-def _merge_user_defined_candidates(brief: ProjectBrief, candidates: list[dict[str, Any]] | None, raw_text: str) -> list[dict[str, Any]]:
+def _must_include_comps_for_discovery(brief: ProjectBrief, raw_text: str = "") -> list[dict[str, str]]:
+    items = list(brief.must_include_comps)
+    items.extend(_parse_user_defined_comps(raw_text))
+    seen: set[str] = set()
+    unique = []
+    for item in items:
+        key = _canonical_candidate_text(item.get("name", ""), item.get("location", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append({"name": item.get("name", ""), "location": item.get("location", ""), "note": item.get("note", "")})
+    return unique
+
+
+def _merge_user_defined_candidates(brief: ProjectBrief, candidates: list[dict[str, Any]] | None, must_include_comps: list[dict[str, str]]) -> list[dict[str, Any]]:
     merged = list(candidates or [])
-    for index, item in enumerate(_parse_user_defined_comps(raw_text), start=1):
+    for index, item in enumerate(must_include_comps, start=1):
         if not _canonical_candidate_text(item["name"], item["location"]):
             continue
         duplicate = _find_duplicate_candidate(merged, item)
@@ -611,11 +619,27 @@ INDEX_HTML = r"""<!doctype html>
     }
     input::placeholder, textarea::placeholder { color: #9ba39e; opacity: 1; }
     textarea { min-height: 74px; resize: vertical; }
-    .user-defined-comp-input, .comp-type-input, .amenity-priority-input {
+    .must-include-comp-input, .comp-type-input, .design-priority-input {
       margin-bottom: 8px;
     }
-    .user-defined-comp-input:last-child, .comp-type-input:last-child, .amenity-priority-input:last-child {
+    .must-include-comp-input:last-child, .comp-type-input:last-child, .design-priority-input:last-child {
       margin-bottom: 0;
+    }
+    .form-group {
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .form-group h2 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .hint {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
@@ -745,36 +769,45 @@ INDEX_HTML = r"""<!doctype html>
   <header><h1>Comp Study Deck Builder</h1></header>
   <main>
     <aside>
-      <label>Project name</label>
-      <input id="project_name" placeholder="e.g., 200 Vesey Test Study">
-      <label>Address</label>
-      <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
-      <label>Program</label>
-      <input id="program_type" placeholder="e.g., office repositioning">
-      <div class="row">
-        <div>
-          <label>Geography</label>
-          <input id="geography" placeholder="e.g., New York, NY">
+      <div class="form-group">
+        <h2>Project brief</h2>
+        <p class="hint">These are the fields the future frontend or RFP autofill should send to this agent.</p>
+        <label>Project name</label>
+        <input id="project_name" placeholder="e.g., 200 Vesey Repositioning">
+        <label>Address</label>
+        <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
+        <label>Program type</label>
+        <input id="program_type" placeholder="e.g., office repositioning">
+        <label>Scope summary</label>
+        <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
+        <div class="row">
+          <div>
+            <label>Geography</label>
+            <input id="geography" placeholder="e.g., New York City">
+          </div>
+          <div>
+            <label>Number of comps</label>
+            <input id="max_comps" type="number" min="1" max="12" placeholder="e.g., 5">
+          </div>
         </div>
-        <div>
-          <label>Number of comps</label>
-          <input id="max_comps" type="number" min="1" max="12" placeholder="e.g., 5">
+        <label>Design priorities</label>
+        <div id="design_priorities_container">
+          <input type="text" id="design_priorities_0" placeholder="Design priority (e.g., arrival experience)" class="design-priority-input">
         </div>
       </div>
-      <label>Comp types</label>
-      <div id="comp_types_container">
-        <input type="text" id="comp_types_0" placeholder="Comp type (e.g., adaptive reuse)" class="comp-type-input">
-      </div>
-      <label>Amenity priorities</label>
-      <div id="amenity_priorities_container">
-        <input type="text" id="amenity_priorities_0" placeholder="Amenity priority (e.g., fitness_wellness)" class="amenity-priority-input">
-      </div>
-      <label>User-Defined Comps</label>
-      <div id="user_defined_comps_container">
-        <input type="text" id="user_defined_comps_0" placeholder="Project name | Location | Note (optional)" class="user-defined-comp-input">
-      </div>
-      <div class="checks">
-        <label class="check"><input id="auto_approve_user_comps" type="checkbox"> Auto-approve user-defined comps</label>
+      <div class="form-group">
+        <h2>Comparative projects</h2>
+        <p class="hint">The agent searches on its own, then adds any must-use comps you provide.</p>
+        <label>Comp guidance</label>
+        <textarea id="comp_guidance" placeholder="e.g., Prioritize recent repositioning projects with strong arrival, amenity, and public realm moves."></textarea>
+        <label>Comp types</label>
+        <div id="comp_types_container">
+          <input type="text" id="comp_types_0" placeholder="Comp type (e.g., office lobby repositioning)" class="comp-type-input">
+        </div>
+        <label>Must-use comps</label>
+        <div id="must_include_comps_container">
+          <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
+        </div>
       </div>
       <div class="row">
         <div>
@@ -816,11 +849,17 @@ INDEX_HTML = r"""<!doctype html>
     function value(id) { return document.getElementById(id).value; }
     function checked(id) { return document.getElementById(id).checked; }
     function listValue(id) { return value(id).split(',').map(x => x.trim()).filter(Boolean); }
-    function getUserDefinedComps() {
-      const inputs = document.querySelectorAll('.user-defined-comp-input');
+    function getLineValues(className) {
+      const inputs = document.querySelectorAll('.' + className);
       return Array.from(inputs)
         .map(input => input.value.trim())
         .filter(value => value !== '');
+    }
+    function parseCompRows(className) {
+      return getLineValues(className).map(row => {
+        const parts = row.split('|').map(part => part.trim());
+        return { name: parts[0] || '', location: parts[1] || '', note: parts[2] || '' };
+      }).filter(item => item.name);
     }
     
     function getDynamicInputValues(className) {
@@ -831,20 +870,29 @@ INDEX_HTML = r"""<!doctype html>
     }
     
     function payload() {
+      const compTypes = getDynamicInputValues('comp-type-input');
+      const designPriorities = getDynamicInputValues('design-priority-input');
+      const mustIncludeComps = parseCompRows('must-include-comp-input');
       return {
         project_name: value('project_name'),
         address: value('address'),
         program_type: value('program_type'),
+        scope_summary: value('scope_summary'),
         geography: value('geography'),
+        design_priorities: designPriorities,
         max_comps: Number(value('max_comps') || 5),
-        comp_types: getDynamicInputValues('comp-type-input').join(', '),
-        amenity_priorities: getDynamicInputValues('amenity-priority-input').join(', '),
+        comp_types: compTypes.join(', '),
+        amenity_priorities: designPriorities.join(', '),
         radius_miles: Number(value('radius_miles') || 3),
         time_horizon_years: Number(value('time_horizon_years') || 8),
         live_search: checked('live_search'),
-        user_defined_comps: getUserDefinedComps().join('\n'),
-        auto_approve_user_comps: checked('auto_approve_user_comps'),
-        output_root: value('output_root')
+        user_defined_comps: getLineValues('must-include-comp-input').join('\n'),
+        output_root: value('output_root'),
+        comparative_projects: {
+          comp_guidance: value('comp_guidance'),
+          comp_types: compTypes,
+          must_include_comps: mustIncludeComps
+        }
       };
     }
     function setupDynamicInputs(containerId, inputClass, placeholder) {
@@ -856,7 +904,6 @@ INDEX_HTML = r"""<!doctype html>
         const isLastInput = inputs[inputs.length - 1] === currentInput;
         const hasContent = currentInput.value.trim() !== '';
         
-        // If this is the last input and has content, add a new one
         if (isLastInput && hasContent) {
           const newInput = document.createElement('input');
           newInput.type = 'text';
@@ -867,7 +914,6 @@ INDEX_HTML = r"""<!doctype html>
           container.appendChild(newInput);
         }
         
-        // Remove empty inputs (except the last one)
         const allInputs = container.querySelectorAll('.' + inputClass);
         for (let i = allInputs.length - 2; i >= 0; i--) {
           if (allInputs[i].value.trim() === '') {
@@ -876,23 +922,22 @@ INDEX_HTML = r"""<!doctype html>
         }
       }
       
-      // Add event listener to all existing inputs
       const existingInputs = container.querySelectorAll('.' + inputClass);
       existingInputs.forEach(input => {
         input.addEventListener('input', handleInput);
       });
     }
     
-    function setupUserDefinedCompsInputs() {
-      setupDynamicInputs('user_defined_comps_container', 'user-defined-comp-input', 'Project name | Location | Note (optional)');
+    function setupMustIncludeCompsInputs() {
+      setupDynamicInputs('must_include_comps_container', 'must-include-comp-input', 'Project name | Location | Note (optional)');
     }
-    
+
     function setupCompTypesInputs() {
       setupDynamicInputs('comp_types_container', 'comp-type-input', 'Comp type (e.g., adaptive reuse)');
     }
     
-    function setupAmenityPrioritiesInputs() {
-      setupDynamicInputs('amenity_priorities_container', 'amenity-priority-input', 'Amenity priority (e.g., fitness_wellness)');
+    function setupDesignPrioritiesInputs() {
+      setupDynamicInputs('design_priorities_container', 'design-priority-input', 'Design priority (e.g., arrival experience)');
     }
     
     function setBusy(isBusy, text, actionText = 'Searching...') {
@@ -945,8 +990,8 @@ INDEX_HTML = r"""<!doctype html>
       const candidates = lastCandidates.map((c, i) => {
         const attrs = c.known_attributes || {};
         const takeaway = attrs.presentation_takeaway || (c.source_notes || []).join(' ') || c.quick_reason || 'Review source notes before approval.';
-        const sourceLabel = c.candidate_source === 'user_defined' ? 'Source: User-defined' : 
-                           c.candidate_source === 'user_defined_and_live' ? 'Source: User-defined + live search' : 
+        const sourceLabel = c.candidate_source === 'user_defined' ? 'Source: Must-use comp' : 
+                           c.candidate_source === 'user_defined_and_live' ? 'Source: Must-use comp + live search' : 
                            'Source: Live search';
         const userNote = c.user_note ? `<div class="meta">Note: ${escapeHtml(c.user_note)}</div>` : '';
         return `<article class="candidate">
@@ -1000,9 +1045,9 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
     // Initialize all dynamic inputs
-    setupUserDefinedCompsInputs();
+    setupMustIncludeCompsInputs();
     setupCompTypesInputs();
-    setupAmenityPrioritiesInputs();
+    setupDesignPrioritiesInputs();
     document.getElementById('browse_output').addEventListener('click', async () => {
       try {
         await selectOutputFolder();

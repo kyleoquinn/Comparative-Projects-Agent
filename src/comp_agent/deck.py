@@ -7,7 +7,7 @@ from typing import Any
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 from PIL import Image
 
@@ -17,15 +17,20 @@ from comp_agent.models import CompCandidate, CompCriterion, MetricSummary, Proje
 from comp_agent.workspace import write_json
 
 
-FONT = "Aptos"
-INK = RGBColor(35, 35, 35)
-MUTED = RGBColor(100, 104, 99)
-LINE = RGBColor(217, 221, 216)
-FILL = RGBColor(250, 249, 246)
+FONT = "Segoe UI"
+INK = RGBColor(0, 0, 0)
+MUTED = RGBColor(169, 161, 155)
+LINE = RGBColor(190, 182, 175)
+GRID = RGBColor(169, 161, 155)
+BLACK = RGBColor(0, 0, 0)
+FILL = RGBColor(255, 255, 255)
 PAPER = RGBColor(255, 255, 255)
-ACCENT = RGBColor(47, 111, 100)
-ACCENT_2 = RGBColor(123, 95, 51)
-DARK = RGBColor(48, 54, 51)
+ACCENT = RGBColor(0, 169, 92)
+ACCENT_2 = RGBColor(255, 172, 42)
+DARK = RGBColor(0, 0, 0)
+LIGHT_GREEN = RGBColor(115, 201, 45)
+ACCENT_TINT = RGBColor(229, 246, 237)
+MATRIX_DOT_DIAMETER = 0.052
 LOGO_PATH = Path(__file__).with_name("assets") / "pelli_clarke_partners_logo.jpg"
 
 
@@ -68,6 +73,7 @@ def create_concept_deck_from_data(
     for index, comp in enumerate(deck_data["comps"], start=1):
         _profile_slide(prs, comp, index)
     _comparison_matrix_slides(prs, deck_data)
+    _design_levers_slide(prs, deck_data)
     _takeaways_slide(prs, deck_data)
 
     prs.save(output)
@@ -115,24 +121,32 @@ def _add_text(
     bold: bool = False,
     color=INK,
     align: PP_ALIGN | None = None,
+    valign: MSO_ANCHOR | None = None,
+    word_wrap: bool = True,
 ):
     box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     frame = box.text_frame
     frame.clear()
-    frame.word_wrap = True
+    frame.word_wrap = word_wrap
     frame.margin_left = 0
     frame.margin_right = 0
     frame.margin_top = 0
     frame.margin_bottom = 0
+    if valign is not None:
+        frame.vertical_anchor = valign
     paragraph = frame.paragraphs[0]
     if align is not None:
         paragraph.alignment = align
     paragraph.text = _display(text)
-    run = paragraph.runs[0] if paragraph.runs else paragraph.add_run()
-    run.font.name = FONT
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run.font.color.rgb = color
+    for paragraph in frame.paragraphs:
+        if align is not None:
+            paragraph.alignment = align
+        runs = paragraph.runs or [paragraph.add_run()]
+        for run in runs:
+            run.font.name = FONT
+            run.font.size = Pt(size)
+            run.font.bold = bold
+            run.font.color.rgb = color
     return box
 
 
@@ -140,11 +154,13 @@ def _add_section_label(slide, text: str, x: float, y: float, w: float = 4.0) -> 
     _add_text(slide, text.upper(), x, y, w, 0.18, size=7, bold=True, color=MUTED)
 
 
-def _add_rule(slide, x: float, y: float, w: float) -> None:
+def _add_rule(slide, x: float, y: float, w: float, color: RGBColor = GRID, *, width: float = 0.35) -> None:
     shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(0.01))
     shape.fill.solid()
-    shape.fill.fore_color.rgb = LINE
-    shape.line.color.rgb = LINE
+    shape.fill.fore_color.rgb = color
+    shape.line.color.rgb = color
+    shape.line.width = Pt(width)
+    _disable_shadow(shape)
 
 
 def _add_table(slide, rows: list[list[Any]], x: float, y: float, w: float, h: float, *, header_size: int = 8, body_size: int = 7) -> None:
@@ -214,9 +230,9 @@ def _profile_slide(prs: Presentation, comp: dict[str, Any], index: int) -> None:
     _add_text(slide, meta, 8.06, 1.48, 4.4, 0.22, size=9, color=MUTED)
     _tags(slide, _profile_tags(comp), 8.05, 1.82, 4.65)
     _facts_card(slide, "Universal Facts", _universal_fact_rows(comp), 8.05, 2.16, 4.65, 1.76, row_height=0.19, value_size=6)
-    _facts_card(slide, "Adaptive Facts", list(comp["adaptive_fields"].items())[:5], 8.05, 4.05, 4.65, 1.68, row_height=0.25, value_size=6)
-    _add_section_label(slide, "Relevance to Subject", 8.05, 5.88)
-    _add_text(slide, comp["relevance_to_subject"], 8.05, 6.1, 4.65, 0.52, size=9)
+    _facts_card(slide, "Adaptive Facts", list(comp["adaptive_fields"].items())[:5], 8.05, 4.05, 4.65, 1.82, row_height=0.25, value_size=6)
+    _add_section_label(slide, "Relevance to Subject", 8.05, 6.03)
+    _add_text(slide, comp["relevance_to_subject"], 8.05, 6.25, 4.65, 0.42, size=9)
     _add_text(slide, _sources_footer(comp), 0.55, 6.82, 11.85, 0.18, size=5, color=MUTED)
     _content_footer(slide, len(prs.slides))
 
@@ -269,7 +285,7 @@ def _add_cover_picture(slide, path: Path, x: float, y: float, w: float, h: float
 
 def _comparison_matrix_slides(prs: Presentation, deck_data: dict[str, Any]) -> None:
     comps = deck_data["comps"]
-    columns = deck_data["deck_strategy"]["comparison_matrix_columns"][:12]
+    columns = deck_data["deck_strategy"]["comparison_matrix_columns"][:18]
     row_capacity = 14
     if not comps:
         _comparison_matrix_slide(prs, deck_data, [], columns, page=1, total_pages=1)
@@ -292,18 +308,21 @@ def _comparison_matrix_slide(
     title = _matrix_title(deck_data)
     if total_pages > 1:
         title = f"{title} ({page}/{total_pages})"
-    _add_text(slide, title, 3.1, 0.16, 7.6, 0.3, size=16, bold=True)
+    count_label = f"{len(comps)} comps x {len(columns)} features"
+    _slide_title(slide, title, count_label)
     if not comps or not columns:
         _add_text(slide, "Comparison data pending.", 0.75, 3.2, 5.0, 0.3, size=14, color=MUTED)
         return
 
-    left_x = 0.18
-    left_w = 2.55
-    matrix_x = 2.98
-    matrix_w = 9.45
-    header_y = 0.62
-    header_h = 1.08
-    grid_y = 2.05
+    _matrix_legend(slide, 0.55, 1.25, 11.85)
+
+    left_x = 0.55
+    left_w = 2.7
+    matrix_x = 3.4
+    matrix_w = 8.75
+    header_y = 1.48
+    header_h = 0.48
+    grid_y = 2.08
     row_h = 0.32
     grid_h = row_h * len(comps)
     col_w = matrix_w / len(columns)
@@ -323,8 +342,35 @@ def _takeaways_slide(prs: Presentation, deck_data: dict[str, Any]) -> None:
     slide = _blank_slide(prs)
     _slide_title(slide, "Project Positioning Takeaways", "Patterns across the approved comp set")
     summary = deck_data.get("takeaway_summary") or "The comp set points toward a small number of recurring market and design patterns."
-    _add_text(slide, summary, 0.8, 1.28, 7.1, 0.55, size=13, color=DARK)
-    _takeaway_trend_table(slide, deck_data.get("takeaways") or [], 0.8, 2.08, 11.75, 4.72)
+    _add_text(slide, summary, 0.55, 1.28, 7.35, 0.55, size=13, color=DARK)
+    _takeaway_trend_table(slide, deck_data.get("takeaways") or [], 0.55, 2.08, 11.85, 4.72)
+    _content_footer(slide, len(prs.slides))
+
+
+def _design_levers_slide(prs: Presentation, deck_data: dict[str, Any]) -> None:
+    slide = _blank_slide(prs)
+    _slide_title(slide, "Design Levers", "Translating comp evidence into PC&P design opportunities")
+    _add_text(
+        slide,
+        "This read groups the market signals into moves the design team can shape, edit, and elevate.",
+        0.55,
+        1.28,
+        8.8,
+        0.34,
+        size=11,
+        color=MUTED,
+    )
+    groups = _design_lever_groups(deck_data)
+    y = 1.82
+    row_step = 0.96
+    for index, group in enumerate(groups, start=1):
+        _add_text(slide, f"{index:02d}", 0.72, y + 0.1, 0.38, 0.18, size=8, bold=True, color=ACCENT)
+        _add_text(slide, group["title"], 1.25, y + 0.02, 2.8, 0.22, size=13, bold=True, color=INK)
+        _add_text(slide, group["description"], 1.25, y + 0.34, 4.3, 0.24, size=7, color=MUTED)
+        _design_lever_tokens(slide, group["features"], len((deck_data.get("comps") or [])), 6.1, y + 0.15)
+        if index < len(groups):
+            _add_rule(slide, 0.72, y + 0.82, 11.1, LINE)
+        y += row_step
     _content_footer(slide, len(prs.slides))
 
 
@@ -339,8 +385,14 @@ def _takeaway_trend_table(slide, takeaways: list[dict[str, Any]], x: float, y: f
         rows = ["Comparable projects share a small number of recurring design and positioning moves."]
     header_h = 0.34
     row_h = min(0.44, (h - header_h) / max(1, len(rows)))
-    _outline_rect(slide, x, y, w, header_h + row_h * len(rows), LINE, fill=FILL, line_width=0.5)
-    _add_text(slide, "Trends Across Comps", x + 0.18, y + 0.09, w - 0.36, 0.14, size=8, bold=True, color=MUTED)
+    _outline_rect(slide, x, y, w, header_h + row_h * len(rows), BLACK, fill=FILL, line_width=1.0)
+    header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(header_h))
+    header.fill.solid()
+    header.fill.fore_color.rgb = ACCENT_TINT
+    header.line.color.rgb = BLACK
+    header.line.width = Pt(0.45)
+    _disable_shadow(header)
+    _add_text(slide, "Trends Across Comps", x + 0.18, y + 0.09, w - 0.36, 0.14, size=8, bold=True, color=INK)
     for index, trend in enumerate(rows, start=1):
         row_y = y + header_h + (index - 1) * row_h
         if index > 1:
@@ -349,26 +401,123 @@ def _takeaway_trend_table(slide, takeaways: list[dict[str, Any]], x: float, y: f
         _add_text(slide, trend, x + 0.7, row_y + 0.08, w - 0.95, row_h - 0.08, size=8, color=INK)
 
 
+def _matrix_legend(slide, x: float, y: float, w: float) -> None:
+    _add_text(slide, "Dots indicate presence of a feature; shaded bars show frequency across the comp set.", x, y, 6.5, 0.16, size=7, color=MUTED)
+    legend_w = 0.22
+    start_x = x + w - 1.55
+    for index, ratio in enumerate([0.2, 0.6, 1.0]):
+        _outline_rect(slide, start_x + index * (legend_w + 0.03), y - 0.005, legend_w, 0.14, LINE, fill=_heat_color(ratio), line_width=0.25)
+    _add_text(slide, "feature frequency", start_x + 0.82, y, 0.78, 0.14, size=5, color=MUTED)
+
+
+def _design_lever_groups(deck_data: dict[str, Any]) -> list[dict[str, Any]]:
+    counts = _matrix_feature_counts(deck_data)
+    if not counts:
+        return []
+    cluster_specs = [
+        {
+            "title": "Hospitality Arrival",
+            "description": "Arrival features are shifting from circulation into hospitality and dwell time.",
+            "labels": ["Lobby Seating", "Sky Lobby", "Concierge / Hospitality", "Cafe", "Bar / Lounge"],
+        },
+        {
+            "title": "Food & Social Program",
+            "description": "Food, beverage, and lounge uses are recurring tools for daily activity.",
+            "labels": ["Cafe", "Restaurant", "Food Hall", "Bar / Lounge", "Tenant Lounge"],
+        },
+        {
+            "title": "Tenant Amenity Network",
+            "description": "Shared tenant amenities point to a more complete workday support system.",
+            "labels": ["Tenant Lounge", "Co-working", "Conference Center", "Fitness / Wellness", "Event Space", "Bike / Mobility"],
+        },
+        {
+            "title": "Outdoor Amenity Value",
+            "description": "Outdoor features show where amenity value extends beyond enclosed space.",
+            "labels": ["Terraces", "Public Plaza", "Fitness / Wellness", "Tenant Lounge", "Cafe"],
+        },
+        {
+            "title": "Public-Facing Activation",
+            "description": "Street-level features make the project more visible, open, and active.",
+            "labels": ["Retail", "Restaurant", "Cafe", "Food Hall", "Public Plaza", "Transit Connection", "Art / Installations"],
+        },
+        {
+            "title": "Access & Mobility",
+            "description": "Connection features turn convenience into part of the user experience.",
+            "labels": ["Transit Connection", "Bike / Mobility", "Public Plaza", "Retail"],
+        },
+        {
+            "title": "Identity & Place",
+            "description": "Identity features help the project read as specific rather than generic.",
+            "labels": ["Art / Installations", "Sky Lobby", "Public Plaza", "Concierge / Hospitality", "Food Hall"],
+        },
+    ]
+    groups = []
+    for spec in cluster_specs:
+        features = _feature_group(counts, spec["labels"])
+        if not features:
+            continue
+        score = sum(count for _label, count in features)
+        groups.append({**spec, "features": features, "score": score})
+    groups = sorted(groups, key=lambda group: (-group["score"], group["title"]))[:5]
+    if not groups:
+        groups = [{"title": "Dominant Feature Signals", "description": "The most frequent features define the clearest market signal.", "features": counts[:4], "score": sum(count for _label, count in counts[:4])}]
+    return [{"title": group["title"], "description": group["description"], "features": group["features"]} for group in groups]
+
+
+def _matrix_feature_counts(deck_data: dict[str, Any]) -> list[tuple[str, int]]:
+    comps = deck_data.get("comps") or []
+    columns = (deck_data.get("deck_strategy") or {}).get("comparison_matrix_columns") or []
+    rows: list[tuple[str, int]] = []
+    for column in columns:
+        count = sum(1 for comp in comps if _has_matrix_dot((comp.get("comparison_flags") or {}).get(column)))
+        if count:
+            rows.append((column, count))
+    return sorted(rows, key=lambda item: (-item[1], item[0]))
+
+
+def _feature_group(counts: list[tuple[str, int]], labels: list[str]) -> list[tuple[str, int]]:
+    lookup = {label: count for label, count in counts}
+    selected = [(label, lookup[label]) for label in labels if label in lookup]
+    return selected[:4]
+
+
+def _design_lever_tokens(slide, features: list[tuple[str, int]], comp_count: int, x: float, y: float) -> None:
+    cursor = x
+    for label, count in features[:4]:
+        text = _compact_feature_label(label)
+        width = max(0.72, min(1.12, 0.085 * len(text) + 0.34))
+        shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(cursor), Inches(y), Inches(width), Inches(0.24))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = ACCENT_TINT
+        shape.line.color.rgb = ACCENT
+        shape.line.width = Pt(0.45)
+        _disable_shadow(shape)
+        _add_text(slide, text, cursor + 0.04, y, width - 0.08, 0.24, size=6, bold=True, color=INK, align=PP_ALIGN.CENTER, valign=MSO_ANCHOR.MIDDLE)
+        _add_text(slide, f"{count}/{max(1, comp_count)}", cursor, y + 0.32, width, 0.12, size=5, bold=True, color=MUTED, align=PP_ALIGN.CENTER)
+        cursor += width + 0.18
+
+
 def _matrix_header(slide, columns: list[str], x: float, y: float, w: float, h: float, col_w: float) -> None:
-    _outline_rect(slide, x, y, w, h, RGBColor(0, 0, 0), fill=PAPER, line_width=1.2)
-    header_size = _matrix_header_font_size(len(columns))
+    _outline_rect(slide, x, y, w, h, BLACK, fill=PAPER, line_width=1.35)
+    labels = [_wrap_matrix_label(column, col_w) for column in columns]
+    header_font_size = _matrix_header_shared_font_size(labels, col_w)
     for col_index, column in enumerate(columns):
         cx = x + col_index * col_w
         if col_index:
-            _add_rule_vertical(slide, cx, y, h, RGBColor(0, 0, 0), width=0.5)
-        _add_text(slide, _wrap_matrix_label(column), cx + 0.04, y + 0.13, col_w - 0.08, h - 0.18, size=header_size, color=INK)
+            _add_rule_vertical(slide, cx, y, h, BLACK, width=0.45)
+        _add_text(slide, labels[col_index], cx + 0.006, y + 0.04, col_w - 0.012, h - 0.08, size=header_font_size, color=INK, align=PP_ALIGN.CENTER, valign=MSO_ANCHOR.MIDDLE, word_wrap=False)
 
 
 def _project_name_rail(slide, comps: list[dict[str, Any]], x: float, y: float, w: float, row_h: float) -> None:
     name_w = w * 0.62
-    _outline_rect(slide, x, y, w, row_h * len(comps), RGBColor(0, 0, 0), fill=PAPER, line_width=1.0)
-    _add_rule_vertical(slide, x + name_w, y, row_h * len(comps), RGBColor(0, 0, 0), width=0.45)
+    _outline_rect(slide, x, y, w, row_h * len(comps), BLACK, fill=PAPER, line_width=1.2)
+    _add_rule_vertical(slide, x + name_w, y, row_h * len(comps), BLACK, width=0.55)
     for row_index, comp in enumerate(comps):
         cy = y + row_index * row_h
         if row_index:
-            _add_rule(slide, x, cy, w)
-        _add_text(slide, _short_cell(comp.get("project_name"), 30), x + 0.03, cy + 0.04, name_w - 0.05, row_h - 0.04, size=5)
-        _add_text(slide, _short_cell(comp.get("location"), 22), x + name_w + 0.03, cy + 0.04, w - name_w - 0.05, row_h - 0.04, size=5)
+            _add_rule(slide, x, cy, w, BLACK, width=0.45)
+        _add_text(slide, _short_cell(comp.get("project_name"), 32), x + 0.035, cy + 0.045, name_w - 0.06, row_h - 0.04, size=6)
+        _add_text(slide, _short_cell(comp.get("location"), 24), x + name_w + 0.035, cy + 0.045, w - name_w - 0.06, row_h - 0.04, size=6)
 
 
 def _matrix_grid(
@@ -382,48 +531,50 @@ def _matrix_grid(
     col_w: float,
     row_h: float,
 ) -> None:
-    _outline_rect(slide, x, y, w, h, RGBColor(0, 0, 0), fill=PAPER, line_width=1.2)
+    _outline_rect(slide, x, y, w, h, BLACK, fill=PAPER, line_width=1.35)
     for col_index in range(1, len(columns)):
-        _add_rule_vertical(slide, x + col_index * col_w, y, h, RGBColor(128, 128, 128), width=0.35)
+        _add_rule_vertical(slide, x + col_index * col_w, y, h, GRID, width=0.35)
     for row_index, comp in enumerate(comps):
         cy = y + row_index * row_h
         if row_index:
-            _add_rule(slide, x, cy, w)
+            _add_rule(slide, x, cy, w, GRID)
         flags = comp.get("comparison_flags") or {}
         for col_index, column in enumerate(columns):
             if _has_matrix_dot(flags.get(column)):
-                _add_dot(slide, x + col_index * col_w + col_w / 2, cy + row_h / 2, 0.045)
+                _add_dot(slide, x + col_index * col_w + col_w / 2, cy + row_h / 2)
 
 
 def _row_heat_bar(slide, comps: list[dict[str, Any]], columns: list[str], x: float, y: float, w: float, row_h: float) -> None:
     max_count = max(1, len(columns))
     for row_index, comp in enumerate(comps):
         count = sum(1 for column in columns if _has_matrix_dot((comp.get("comparison_flags") or {}).get(column)))
-        _outline_rect(slide, x, y + row_index * row_h, w, row_h, RGBColor(0, 0, 0), fill=_heat_color(count / max_count), line_width=0.45)
+        _outline_rect(slide, x, y + row_index * row_h, w, row_h, BLACK, fill=_heat_color(count / max_count), line_width=0.55)
 
 
 def _column_heat_bar(slide, columns: list[str], comps: list[dict[str, Any]], x: float, y: float, w: float, h: float, col_w: float) -> None:
     max_count = max(1, len(comps))
     for col_index, column in enumerate(columns):
         count = sum(1 for comp in comps if _has_matrix_dot((comp.get("comparison_flags") or {}).get(column)))
-        _outline_rect(slide, x + col_index * col_w, y, col_w, h, RGBColor(0, 0, 0), fill=_heat_color(count / max_count), line_width=0.45)
+        _outline_rect(slide, x + col_index * col_w, y, col_w, h, BLACK, fill=_heat_color(count / max_count), line_width=0.55)
 
 
 def _has_matrix_dot(value: Any) -> bool:
     return value not in (None, "", "—", "None", False, 0)
 
 
-def _add_dot(slide, cx: float, cy: float, diameter: float) -> None:
+def _add_dot(slide, cx: float, cy: float, diameter: float = MATRIX_DOT_DIAMETER) -> None:
     dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(cx - diameter / 2), Inches(cy - diameter / 2), Inches(diameter), Inches(diameter))
     dot.fill.solid()
     dot.fill.fore_color.rgb = RGBColor(0, 0, 0)
     dot.line.color.rgb = RGBColor(0, 0, 0)
+    dot.line.width = Pt(0)
+    _disable_shadow(dot)
 
 
 def _heat_color(ratio: float) -> RGBColor:
     ratio = max(0.0, min(1.0, ratio))
-    low = (246, 235, 140)
-    high = (82, 191, 118)
+    low = (255, 172, 42)
+    high = (0, 169, 92)
     values = [round(low[index] + (high[index] - low[index]) * ratio) for index in range(3)]
     return RGBColor(*values)
 
@@ -453,46 +604,68 @@ def _disable_shadow(shape) -> None:
         pass
 
 
-def _wrap_matrix_label(value: Any) -> str:
-    text = str(value or "").replace(" / ", "/").replace("/", " / ")
-    replacements = {
-        "Amenity / User Experience": "Amenity\nExperience",
-        "Street / Public Interface": "Street / Public\nInterface",
-        "Arrival / Lobby Move": "Arrival / Lobby\nMove",
-        "Podium / Base Strategy": "Podium / Base\nStrategy",
-        "Technology-enabled Amenities": "Technology-\nEnabled\nAmenities",
-        "Wellness-driven Environments": "Wellness-\nDriven\nEnvironments",
+def _wrap_matrix_label(value: Any, col_w: float = 0.7) -> str:
+    compact = _compact_feature_label(value)
+    stacked = {
+        "Lobby Seating": "Lobby\nSeating",
+        "Sky Lobby": "Sky\nLobbies",
+        "Food Hall": "Food\nHalls",
+        "Public Plaza": "Public\nPlazas",
+        "Tenant Lounge": "Tenant\nLounges",
+        "Bar / Lounge": "Bars",
+        "Bike / Mobility": "Bike\nRooms",
     }
-    if text.replace(" / ", " / ") in replacements:
-        return replacements[text.replace(" / ", " / ")]
-    words = text.split()
-    lines: list[str] = []
-    current = ""
-    limit = 12
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if len(candidate) > limit and current:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return "\n".join(_trim_matrix_label_line(line) for line in lines[:5])
+    return stacked.get(str(value or ""), compact)
 
 
-def _matrix_header_font_size(column_count: int) -> int:
-    if column_count >= 11:
+def _compact_feature_label(value: Any) -> str:
+    text = " ".join(str(value or "").replace(" / ", "/").replace("/", " ").replace("-", "").split())
+    labels = {
+        "Art Installations": "Art",
+        "Bar Lounge": "Bar",
+        "Bike Mobility": "Bike",
+        "Branded Amenities": "Brand",
+        "Concierge Hospitality": "Concierge",
+        "Conference Center": "Meetings",
+        "Co working": "Cowork",
+        "Coworking": "Cowork",
+        "Fitness Wellness": "Wellness",
+        "Food Hall": "Food Halls",
+        "Lobby Seating": "Seating",
+        "Public Plaza": "Plaza",
+        "Public Realm": "Realm",
+        "Sky Lobby": "Sky Lobbies",
+        "Tenant Lounge": "Lounges",
+        "Transit Connection": "Transit",
+        "Event Space": "Events",
+        "Sustainability": "Green",
+        "Technology": "Tech",
+    }
+    return labels.get(text, text)
+
+
+def _matrix_header_font_size(label: str, col_w: float) -> int:
+    longest = max((len(line) for line in label.splitlines()), default=0)
+    line_count = len(label.splitlines())
+    if line_count >= 2:
+        return 5 if col_w < 0.7 or longest > 7 else 6
+    if col_w < 0.64 or longest > 8:
         return 5
-    if column_count >= 8:
+    if col_w < 0.78 or longest > 6:
         return 6
     return 7
 
 
-def _trim_matrix_label_line(line: str) -> str:
-    if len(line) <= 14:
+def _matrix_header_shared_font_size(labels: list[str], col_w: float) -> int:
+    if not labels:
+        return 7
+    return min(_matrix_header_font_size(label, col_w) for label in labels)
+
+
+def _trim_matrix_label_line(line: str, limit: int = 14) -> str:
+    if len(line) <= limit:
         return line
-    return line[:14].rsplit(" ", 1)[0].strip() or line[:14]
+    return line[:limit].rsplit(" ", 1)[0].strip() or line[:limit]
 
 
 def _short_cell(value: Any, limit: int) -> str:
@@ -548,9 +721,9 @@ def _tags(slide, tags: list[str], x: float, y: float, w: float = 4.65) -> None:
         width = available * weights[index] / total_weight
         shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(cursor), Inches(y), Inches(width), Inches(0.24))
         shape.fill.solid()
-        shape.fill.fore_color.rgb = RGBColor(235, 241, 238)
-        shape.line.color.rgb = RGBColor(207, 222, 216)
-        _add_text(slide, tag, cursor + 0.06, y + 0.055, width - 0.1, 0.09, size=5, bold=True, color=ACCENT)
+        shape.fill.fore_color.rgb = ACCENT_TINT
+        shape.line.color.rgb = ACCENT
+        _add_text(slide, tag, cursor + 0.04, y, width - 0.08, 0.24, size=5, bold=True, color=INK, align=PP_ALIGN.CENTER, valign=MSO_ANCHOR.MIDDLE)
         cursor += width + gap
 
 
@@ -580,13 +753,14 @@ def _fit_title_line(line: str) -> str:
 
 
 def _profile_tags(comp: dict[str, Any]) -> list[str]:
-    values = [comp["project_type"], comp["intervention_type"], comp["key_program"]]
-    for key, value in comp.get("comparison_flags", {}).items():
-        if value and value != "—":
-            values.append(key)
+    values = [key for key, value in (comp.get("comparison_flags") or {}).items() if _has_matrix_dot(value)]
+    if len(values) < 3:
+        values.extend(key for key, value in (comp.get("adaptive_fields") or {}).items() if value)
+    if len(values) < 3:
+        values.extend([comp["key_program"], comp["intervention_type"], comp["project_type"]])
     tags = []
     for value in values:
-        short = " ".join(str(value).split()[:3])
+        short = _compact_feature_label(value)
         if short and short != "—" and short not in tags:
             tags.append(short)
     return tags
@@ -642,5 +816,19 @@ def _add_logo(slide, x: float, y: float, w: float) -> None:
 
 
 def _content_footer(slide, page_number: int) -> None:
-    _add_logo(slide, 0.55, 7.13, 1.8)
-    _add_text(slide, f"{page_number:02d}", 12.35, 7.11, 0.35, 0.16, size=6, color=MUTED, align=PP_ALIGN.RIGHT)
+    footer_y = 7.13
+    logo_w = 1.8
+    logo_h = _logo_height(logo_w)
+    _add_logo(slide, 0.55, footer_y, logo_w)
+    _add_text(slide, f"{page_number:02d}", 12.35, footer_y + logo_h - 0.14, 0.35, 0.14, size=6, color=MUTED, align=PP_ALIGN.RIGHT, valign=MSO_ANCHOR.BOTTOM)
+
+
+def _logo_height(w: float) -> float:
+    if not LOGO_PATH.exists():
+        return 0.14
+    try:
+        with Image.open(LOGO_PATH) as image:
+            image_w, image_h = image.size
+        return w * image_h / image_w if image_w else 0.14
+    except Exception:
+        return 0.14

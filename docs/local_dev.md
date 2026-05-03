@@ -69,6 +69,7 @@ python -m comp_agent.cli audit --brief examples/project_brief.json --output-root
 | `COMP_AGENT_OPENAI_MODEL` | OpenAI model used by the provider. |
 | `COMP_AGENT_OPENAI_TIMEOUT` | Timeout for OpenAI calls. |
 | `COMP_AGENT_OPENAI_RETRIES` | Retry count for OpenAI calls. |
+| `COMP_AGENT_RESEARCH_CONCURRENCY` | Number of approved comps to enrich in parallel. Default is 3. |
 | `COMP_AGENT_FIELD_REPAIR_LIMIT` | Cap for final auditor field repair calls. |
 
 ## Git Safety

@@ -57,6 +57,7 @@ http://127.0.0.1:8765
 ## Frontend Integration Docs
 
 - [API contract](docs/api_contract.md)
+- [Comp agent input packet](docs/comp_agent_input_packet.md)
 - [Frontend inputs](docs/frontend_inputs.md)
 - [Output contract](docs/output_contract.md)
 - [Local development](docs/local_dev.md)

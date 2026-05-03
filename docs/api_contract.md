@@ -169,7 +169,8 @@ Important returned paths:
   "diligence_notes": "projects_ui/project-slug/outputs/json/diligence_notes.json",
   "deck_audit": "projects_ui/project-slug/outputs/json/deck_audit.json",
   "field_repair_tasks": "projects_ui/project-slug/outputs/json/field_repair_tasks.json",
-  "field_repair_results": "projects_ui/project-slug/outputs/json/field_repair_results.json"
+  "field_repair_results": "projects_ui/project-slug/outputs/json/field_repair_results.json",
+  "image_manifest": "projects_ui/project-slug/outputs/json/image_manifest.json"
 }
 ```
 

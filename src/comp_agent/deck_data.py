@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
@@ -16,8 +17,11 @@ DEFAULT_SUMMARY_COLUMNS = [
     "Relevance",
 ]
 
+ADAPTIVE_FACT_LINE_LIMIT = 54
+ADAPTIVE_FACT_MAX_LINES = 2
+
 COMPARISON_COLUMNS_BY_TYPE = {
-    "office": ["Lobby Repositioning", "Tenant Amenities", "F&B", "Outdoor Space", "Public Realm", "Transit Connection", "Retail Activation"],
+    "office": ["Cafe", "Restaurant", "Food Hall", "Sky Lobby", "Lobby Seating", "Tenant Lounge", "Co-working", "Conference Center", "Fitness / Wellness", "Terraces", "Retail", "Public Plaza", "Branded Amenities", "Art / Installations", "Transit Connection", "Sustainability"],
     "residential": ["Units", "Unit Mix", "Amenity Deck", "Outdoor Space", "Co-working", "Retail", "Parking", "Affordability"],
     "hotel": ["Keys", "Brand / Flag", "Restaurant / Bar", "Rooftop", "Spa / Wellness", "Meeting / Event Space", "Arrival"],
     "mixed": ["Residential", "Hotel", "Office", "Retail", "Public Realm", "Podium Strategy", "Vertical Stacking", "Shared Amenities"],
@@ -28,6 +32,36 @@ COMPARISON_COLUMNS_BY_TYPE = {
     "public realm": ["Public Access", "Landscape", "Programming", "Retail Edge", "Transit", "Civic Identity", "Open Space"],
     "retail": ["Retail Area", "F&B", "Anchor Tenants", "Street Edge", "Public Realm", "Adaptive Reuse", "Destination Strategy"],
 }
+
+FEATURE_MATRIX_MAX_COLUMNS = 18
+GENERIC_FEATURE_COLUMNS = {"Public Realm", "Branded Amenities", "Technology", "Sustainability"}
+
+FEATURE_MATRIX_COLUMNS = [
+    ("Cafe", ("cafe", "coffee", "espresso", "grab and go")),
+    ("Restaurant", ("restaurant", "dining", "food and beverage", "f&b", "food beverage")),
+    ("Food Hall", ("food hall", "market hall", "food market")),
+    ("Bar / Lounge", ("bar", "cocktail", "lounge bar")),
+    ("Sky Lobby", ("sky lobby", "upper lobby", "elevated lobby")),
+    ("Lobby Seating", ("lobby seating", "hospitality seating", "arrival seating", "seating lounge", "lobby lounge")),
+    ("Tenant Lounge", ("tenant lounge", "lounge spaces", "lounge space", "club lounge", "amenity lounge", "tenant club")),
+    ("Co-working", ("co-working", "coworking", "co working", "flex workspace", "shared workspace")),
+    ("Conference Center", ("conference center", "conference centre", "meeting center", "meeting rooms", "meeting space", "boardroom")),
+    ("Event Space", ("event space", "event venue", "town hall", "assembly space")),
+    ("Fitness / Wellness", ("fitness", "wellness", "gym", "health club", "spa")),
+    ("Terraces", ("terrace", "terraces", "roof terrace", "roof deck", "outdoor deck", "outdoor space", "outdoor amenity")),
+    ("Retail", ("retail", "shops", "storefront", "ground floor retail", "retail activation")),
+    ("Public Plaza", ("public plaza", "plaza", "public square", "forecourt")),
+    ("Public Realm", ("public realm", "streetscape", "street edge", "sidewalk", "public interface")),
+    ("Branded Amenities", ("branded amenities", "brand experience", "signature amenity", "curated amenity")),
+    ("Art / Installations", ("art", "installation", "public art", "artwork", "gallery")),
+    ("Transit Connection", ("transit", "subway", "train station", "path", "station connection")),
+    ("Concierge / Hospitality", ("concierge", "hospitality", "host desk", "reception")),
+    ("Technology", ("technology", "app", "touchless", "smart building", "digital")),
+    ("Sustainability", ("sustainability", "leed", "well certification", "green", "embodied carbon", "adaptive reuse")),
+    ("Bike / Mobility", ("bike", "bicycle", "mobility", "bike room", "bike storage")),
+]
+
+FEATURE_MATRIX_DEFAULTS = [label for label, _terms in FEATURE_MATRIX_COLUMNS if label not in GENERIC_FEATURE_COLUMNS][:FEATURE_MATRIX_MAX_COLUMNS]
 
 PROFILE_FIELDS_BY_TYPE = {
     "office": ["Lobby Strategy", "Amenity Package", "Public Realm Interface", "Transit Connection", "Retail Activation"],
@@ -143,7 +177,7 @@ def build_comp_study_deck_data(
         normalize_comp_for_deck(record, candidate_by_id.get(str(record.get("comp_id"))), strategy, source_log)
         for record in records
     ]
-    strategy["comparison_matrix_columns"] = _dynamic_comparison_columns(strategy["comparison_matrix_columns"], comps)
+    strategy["comparison_matrix_columns"] = _dynamic_comparison_columns(strategy["comparison_matrix_columns"], comps, brief)
     for comp in comps:
         comp["comparison_flags"] = _comparison_flags_from_comp(strategy["comparison_matrix_columns"], comp)
     deck_data = {
@@ -225,11 +259,12 @@ def normalize_comp_for_deck(
         "hero_image": normalized_hero,
         "image_package": _normalize_image_package(image_package, normalized_hero),
         "image_candidates": attrs.get("image_candidates") if isinstance(attrs.get("image_candidates"), list) else [],
-        "primary_sources": sources[:4],
+        "primary_sources": sources[:3],
         "data_confidence": _confidence(record, sources),
         "adaptive_fields": adaptive_fields,
         "comparison_flags": _comparison_flags(strategy["comparison_matrix_columns"], attrs, record),
         "selection_reasoning_internal": _selection_reasoning(candidate, record),
+        "feature_evidence_internal": _feature_evidence(record, attrs),
         "diligence_notes_internal": list(record.get("review_notes") or []) + list(candidate.missing_attributes if candidate else []),
     }
 
@@ -262,7 +297,7 @@ def _normalize_image_package(image_package: dict[str, Any], hero_image: dict[str
     return package
 
 
-def build_takeaway_summary(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> str:
+def _legacy_build_takeaway_summary(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> str:
     type_label = strategy.get("project_type_label", "Comparable projects")
     common_features = _ranked_feature_counts(comps, strategy.get("comparison_matrix_columns", []))
     top_features = [label for label, count in common_features[:3] if count]
@@ -272,7 +307,7 @@ def build_takeaway_summary(brief: ProjectBrief, comps: list[dict[str, Any]], str
     return f"{type_label} precedents point toward visible, experience-led upgrades and clear positioning moves."
 
 
-def build_takeaways(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> list[dict[str, str]]:
+def _legacy_build_takeaways(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> list[dict[str, str]]:
     trends: list[str] = []
     feature_counts = _ranked_feature_counts(comps, strategy.get("comparison_matrix_columns", []))
     intervention_counts = _value_counts(comp.get("intervention_type") for comp in comps)
@@ -335,12 +370,158 @@ def build_takeaways(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: 
     return cleaned[:10]
 
 
+def build_takeaway_summary(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> str:
+    type_label = strategy.get("project_type_label", "Comparable projects")
+    common_features = _ranked_feature_counts(comps, strategy.get("comparison_matrix_columns", []))
+    top_features = [label for label, count in common_features[:3] if count]
+    if top_features:
+        feature_text = ", ".join(top_features)
+        return f"{type_label} precedents show the strongest market signals around {feature_text}, with successful projects pairing visible design upgrades with day-to-day user value."
+    return f"{type_label} precedents show that successful projects pair visible design upgrades with day-to-day user value."
+
+
+def build_takeaways(brief: ProjectBrief, comps: list[dict[str, Any]], strategy: dict[str, Any]) -> list[dict[str, str]]:
+    trends: list[str] = []
+    feature_counts = _ranked_feature_counts(comps, strategy.get("comparison_matrix_columns", []))
+    intervention_counts = _value_counts(comp.get("intervention_type") for comp in comps)
+    total = len(comps)
+    feature_count_map = dict(feature_counts)
+    standard_feature = _standard_feature(feature_counts, total)
+
+    for label, count in feature_counts[:7]:
+        if count:
+            trends.append(_feature_takeaway(label, count, total))
+
+    if standard_feature:
+        trends.append(f"{standard_feature} is reading as a standard offering in today's market, so differentiation depends on quality, adjacency, and how clearly it supports the project story.")
+
+    terrace_amenity_count = _paired_feature_count(comps, "Terraces", ["Tenant Lounge", "Co-working", "Conference Center", "Fitness / Wellness"])
+    if terrace_amenity_count >= 2:
+        trends.append(f"{_count_phrase(terrace_amenity_count, total)} projects feature terraces with adjacent amenity program, making outdoor space part of the tenant experience rather than a standalone feature.")
+
+    lobby_count = max(feature_count_map.get("Lobby Seating", 0), feature_count_map.get("Sky Lobby", 0), feature_count_map.get("Cafe", 0))
+    if lobby_count >= 2:
+        trends.append(f"{_count_phrase(lobby_count, total)} projects implement activated lobby spaces to increase arrival impact, dwell time, and perceived hospitality.")
+
+    repositioning_count = sum(count for label, count in intervention_counts if "reposition" in label.lower())
+    if repositioning_count >= 2:
+        trends.append(f"{_count_phrase(repositioning_count, total)} repositioning projects focus on {_repositioning_focus(feature_count_map)} as the clearest way to signal a market shift.")
+
+    text_pool = " ".join(
+        " ".join(
+            str(comp.get(key, ""))
+            for key in ["project_type", "intervention_type", "key_program", "defining_move", "relevance_to_subject"]
+        )
+        for comp in comps
+    ).lower()
+    thematic_trends = [
+        ("public" in text_pool or "street" in text_pool or "plaza" in text_pool, "Ground-floor transparency, plaza upgrades, and street-level activation are recurring ways to make large projects feel more open and accessible."),
+        ("retail" in text_pool or "f&b" in text_pool or "restaurant" in text_pool, "Retail and food-and-beverage uses are strongest when they reinforce the arrival sequence and give the project a more public-facing identity."),
+        ("transit" in text_pool or "subway" in text_pool or "mobility" in text_pool, "Transit and mobility connections are strongest when they are integrated into the user experience rather than treated as background context."),
+        ("premium" in text_pool or "class a" in text_pool or "trophy" in text_pool, "Premium positioning is communicated through a mix of design identity, service quality, and visible shared spaces."),
+    ]
+    for applies, trend in thematic_trends:
+        if applies:
+            trends.append(trend)
+
+    fallback_trends = [
+        "The strongest comps combine a clear design move with a clear user benefit that can be understood quickly.",
+        "Projects with several reinforcing amenities read as more complete repositioning efforts than projects with one isolated upgrade.",
+        "Market-facing improvements are most convincing when arrival, amenity, retail, and public realm moves support the same positioning idea.",
+        "Successful precedents make value visible through materials, access, scale, lighting, program adjacency, and hospitality cues.",
+        "The comp set suggests that early concept work should prioritize a focused set of memorable amenities over diffuse upgrades.",
+    ]
+    trends.extend(fallback_trends)
+
+    cleaned: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for trend in trends:
+        short = _short_without_ellipsis(trend, 155)
+        key = short.lower()
+        if key in seen or "public web sources" in key or "verify" in key:
+            continue
+        seen.add(key)
+        cleaned.append({"trend": short})
+        if len(cleaned) >= 10:
+            break
+    return cleaned[:10]
+
+
 def _ranked_feature_counts(comps: list[dict[str, Any]], columns: list[str]) -> list[tuple[str, int]]:
     counts = []
     for column in columns:
         count = sum(1 for comp in comps if _comparison_has_value((comp.get("comparison_flags") or {}).get(column)))
         counts.append((column, count))
-    return sorted(counts, key=lambda item: (-item[1], columns.index(item[0]) if item[0] in columns else 999))
+    feature_order = {label: index for index, (label, _terms) in enumerate(FEATURE_MATRIX_COLUMNS)}
+    return sorted(counts, key=lambda item: (-item[1], feature_order.get(item[0], columns.index(item[0]) if item[0] in columns else 999)))
+
+
+def _feature_takeaway(label: str, count: int, total: int) -> str:
+    phrase = _count_phrase(count, total)
+    templates = {
+        "Cafe": f"{phrase} projects use cafe service to make the arrival sequence feel more active, hospitable, and useful throughout the day.",
+        "Restaurant": f"{phrase} projects include restaurant or dining program as a public-facing signal of quality and daily activity.",
+        "Food Hall": f"{phrase} projects use food hall concepts to add choice, energy, and a stronger connection between the building and its surrounding market.",
+        "Bar / Lounge": f"{phrase} projects use bar or lounge program to extend amenity value beyond the workday and support hospitality-led positioning.",
+        "Sky Lobby": f"{phrase} projects use sky lobbies to turn vertical circulation into a memorable arrival moment and premium identity cue.",
+        "Lobby Seating": f"{phrase} projects add lobby seating so the ground floor works as an activated hospitality space, not just a pass-through zone.",
+        "Tenant Lounge": f"{phrase} projects include tenant lounges, making shared amenity space a baseline expectation for competitive office repositioning.",
+        "Co-working": f"{phrase} projects include co-working or flexible work settings to support informal meetings, touchdown work, and tenant choice.",
+        "Conference Center": f"{phrase} projects include conference centers, suggesting shared meeting infrastructure is a marketable tenant-service amenity.",
+        "Event Space": f"{phrase} projects include event space to support tenant engagement, programming, and a stronger sense of building community.",
+        "Fitness / Wellness": f"{phrase} projects include fitness or wellness program, reinforcing health-focused amenities as part of the expected tenant package.",
+        "Terraces": f"{phrase} projects feature terraces, showing that usable outdoor space remains one of the clearest high-value differentiators.",
+        "Retail": f"{phrase} projects use retail to activate the base and make the project feel more connected to the street.",
+        "Public Plaza": f"{phrase} projects include public plazas, using open space to improve arrival, visibility, and civic presence.",
+        "Public Realm": f"{phrase} projects invest in the public realm, making the project more approachable from the street and surrounding neighborhood.",
+        "Branded Amenities": f"{phrase} projects use branded amenities to make the offering feel curated rather than generic.",
+        "Art / Installations": f"{phrase} projects use art or installations to create a recognizable identity and a more memorable arrival experience.",
+        "Transit Connection": f"{phrase} projects emphasize transit connections as part of the convenience story for tenants and visitors.",
+        "Sustainability": f"{phrase} projects emphasize sustainability, making performance and responsibility part of the repositioning narrative.",
+    }
+    return templates.get(label, f"{phrase} projects include {label}, suggesting it is an important feature within this competitive set.")
+
+
+def _count_phrase(count: int, total: int) -> str:
+    if total and count >= total:
+        return "Nearly all"
+    if total and count / total >= 0.65:
+        return "Most"
+    if count >= 3:
+        return "Many"
+    if count == 2:
+        return "Several"
+    return "One"
+
+
+def _paired_feature_count(comps: list[dict[str, Any]], primary: str, secondary_options: list[str]) -> int:
+    count = 0
+    for comp in comps:
+        flags = comp.get("comparison_flags") or {}
+        if not _comparison_has_value(flags.get(primary)):
+            continue
+        if any(_comparison_has_value(flags.get(option)) for option in secondary_options):
+            count += 1
+    return count
+
+
+def _repositioning_focus(feature_counts: dict[str, int]) -> str:
+    focus_options = [
+        ("activated lobby and arrival experience", feature_counts.get("Lobby Seating", 0) + feature_counts.get("Sky Lobby", 0) + feature_counts.get("Cafe", 0)),
+        ("tenant amenity depth", feature_counts.get("Tenant Lounge", 0) + feature_counts.get("Co-working", 0) + feature_counts.get("Conference Center", 0)),
+        ("outdoor amenity value", feature_counts.get("Terraces", 0) + feature_counts.get("Public Plaza", 0)),
+        ("street-level activation", feature_counts.get("Retail", 0) + feature_counts.get("Restaurant", 0) + feature_counts.get("Public Plaza", 0)),
+    ]
+    return max(focus_options, key=lambda item: item[1])[0]
+
+
+def _standard_feature(feature_counts: list[tuple[str, int]], total: int) -> str:
+    if not total:
+        return ""
+    for label, count in feature_counts:
+        if count / total >= 0.65 and label in {"Tenant Lounge", "Conference Center", "Fitness / Wellness", "Terraces", "Cafe", "Restaurant", "Lobby Seating"}:
+            return label
+    return ""
 
 
 def _adaptive_label_counts(comps: list[dict[str, Any]]) -> list[tuple[str, int]]:
@@ -480,6 +661,16 @@ def _adaptive_fields(attrs: dict[str, Any], record: dict[str, Any], strategy: di
         value = _format_adaptive_value(explicit) if not _blank_adaptive_value(explicit) else ""
         if value and not _duplicates_universal_value(label, value, attrs, record):
             fields[label] = value
+    if len(fields) < 5:
+        for label, raw_value in adaptive.items():
+            clean_label = _title_label(label)
+            if clean_label in fields or _is_internal_label(clean_label):
+                continue
+            value = _format_adaptive_value(raw_value) if not _blank_adaptive_value(raw_value) else ""
+            if value and not _duplicates_universal_value(clean_label, value, attrs, record):
+                fields[clean_label] = value
+            if len(fields) >= 5:
+                break
     return {key: value for key, value in fields.items() if value and value != "—"}
 
 
@@ -504,7 +695,41 @@ def _format_adaptive_value(value: Any) -> str:
         text = "; ".join(parts)
     else:
         text = str(value)
-    return _short_without_ellipsis(text.strip(), 86)
+    return _two_line_adaptive_value(text)
+
+
+def _two_line_adaptive_value(value: str) -> str:
+    cleaned = " ".join(str(value or "").split()).strip()
+    if not cleaned:
+        return "—"
+    words = cleaned.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= ADAPTIVE_FACT_LINE_LIMIT or not current:
+            current = candidate
+            continue
+        lines.append(current)
+        current = word
+        if len(lines) == ADAPTIVE_FACT_MAX_LINES:
+            break
+    if current and len(lines) < ADAPTIVE_FACT_MAX_LINES:
+        lines.append(current)
+    if not lines:
+        lines = [cleaned[:ADAPTIVE_FACT_LINE_LIMIT]]
+    if len(lines) == ADAPTIVE_FACT_MAX_LINES and words:
+        used_word_count = sum(len(line.split()) for line in lines)
+        if used_word_count < len(words):
+            lines[-1] = _trim_to_line_limit(lines[-1], ADAPTIVE_FACT_LINE_LIMIT)
+    return "\n".join(_trim_to_line_limit(line, ADAPTIVE_FACT_LINE_LIMIT) for line in lines[:ADAPTIVE_FACT_MAX_LINES])
+
+
+def _trim_to_line_limit(value: str, limit: int) -> str:
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].strip(" ,;:") or text[:limit].strip(" ,;:")
 
 
 def _duplicates_universal_value(label: str, value: str, attrs: dict[str, Any], record: dict[str, Any]) -> bool:
@@ -533,53 +758,60 @@ def _comparison_flags(columns: list[str], attrs: dict[str, Any], record: dict[st
     return {column: _infer_short_value(column, text) for column in columns}
 
 
-def _dynamic_comparison_columns(default_columns: list[str], comps: list[dict[str, Any]]) -> list[str]:
+def _dynamic_comparison_columns(default_columns: list[str], comps: list[dict[str, Any]], brief: ProjectBrief | None = None) -> list[str]:
     scores: dict[str, int] = {}
-    ordered: list[str] = []
+    first_seen: dict[str, int] = {}
+    comp_hits: dict[str, int] = {}
+    intent_text = _brief_feature_text(brief)
 
-    def add(label: Any, weight: int = 1) -> None:
-        cleaned = _comparison_label(label)
-        if not cleaned:
+    def add(label: str, weight: int) -> None:
+        if label in GENERIC_FEATURE_COLUMNS:
             return
-        if cleaned not in scores:
-            ordered.append(cleaned)
-            scores[cleaned] = 0
-        scores[cleaned] += weight
+        if label not in scores:
+            first_seen[label] = len(first_seen)
+            scores[label] = 0
+            comp_hits[label] = 0
+        scores[label] += weight
 
-    for comp in comps:
-        for label, value in (comp.get("adaptive_fields") or {}).items():
-            if not _blank_adaptive_value(value):
-                add(label, 5)
-        for label, value in (comp.get("comparison_flags") or {}).items():
-            if not _blank_adaptive_value(value):
-                add(label, 1)
-        text = " ".join(
-            str(comp.get(key, ""))
-            for key in ["project_type", "intervention_type", "key_program", "defining_move", "relevance_to_subject"]
-        ).lower()
-        for label in default_columns:
-            if _feature_in_text(label, text):
-                add(label, 1)
+    for label, terms in FEATURE_MATRIX_COLUMNS:
+        if _feature_terms_in_text(terms, intent_text):
+            add(label, 6)
 
     for label in default_columns:
-        add(label, 1)
+        normalized = _feature_label_from_text(label)
+        if normalized:
+            add(normalized, 2)
 
-    ranked = sorted(ordered, key=lambda label: (-scores[label], ordered.index(label)))
-    return ranked[:12] or default_columns[:8]
+    for comp in comps:
+        text = _comp_feature_text(comp)
+        for label, terms in FEATURE_MATRIX_COLUMNS:
+            if label in GENERIC_FEATURE_COLUMNS:
+                continue
+            if _feature_terms_in_text(terms, text):
+                add(label, 10)
+                comp_hits[label] += 1
+
+    for label in list(scores):
+        if comp_hits[label] > 1:
+            scores[label] += comp_hits[label] * 4
+
+    feature_order = {label: index for index, (label, _terms) in enumerate(FEATURE_MATRIX_COLUMNS)}
+    ranked = sorted(scores, key=lambda label: (-scores[label], -comp_hits[label], feature_order.get(label, first_seen[label])))
+    selected = [label for label in ranked if comp_hits[label] or scores[label] >= 6]
+    if len(selected) < 10 and _brief_is_office_like(brief):
+        for label in FEATURE_MATRIX_DEFAULTS:
+            if label not in selected:
+                selected.append(label)
+            if len(selected) >= 10:
+                break
+    selected = selected[:FEATURE_MATRIX_MAX_COLUMNS] or FEATURE_MATRIX_DEFAULTS[:10]
+    random.shuffle(selected)
+    return selected
 
 
 def _comparison_flags_from_comp(columns: list[str], comp: dict[str, Any]) -> dict[str, str]:
     fields = comp.get("adaptive_fields") or {}
-    text = " ".join(
-        [
-            str(comp.get("project_type", "")),
-            str(comp.get("intervention_type", "")),
-            str(comp.get("key_program", "")),
-            str(comp.get("defining_move", "")),
-            str(comp.get("relevance_to_subject", "")),
-            str(fields),
-        ]
-    ).lower()
+    text = _comp_feature_text(comp)
     flags: dict[str, str] = {}
     for column in columns:
         if column in fields and not _blank_adaptive_value(fields[column]):
@@ -601,23 +833,99 @@ def _comparison_label(value: Any) -> str:
     return label
 
 
+def _brief_feature_text(brief: ProjectBrief | None) -> str:
+    if not brief:
+        return ""
+    parts = [
+        brief.project_name,
+        brief.address,
+        brief.program_type,
+        brief.geography,
+        brief.scope_summary,
+        brief.comp_guidance,
+        " ".join(brief.comp_types),
+        " ".join(brief.design_priorities),
+        " ".join(brief.amenity_priorities),
+        " ".join(brief.presentation_priorities),
+        str(brief.filters),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def _brief_is_office_like(brief: ProjectBrief | None) -> bool:
+    text = _brief_feature_text(brief)
+    return not text or any(token in text for token in ("office", "workplace", "lobby", "tenant", "reposition", "amenity"))
+
+
+def _comp_feature_text(comp: dict[str, Any]) -> str:
+    fields = comp.get("adaptive_fields") or {}
+    parts = [
+        comp.get("project_type", ""),
+        comp.get("intervention_type", ""),
+        comp.get("key_program", ""),
+        comp.get("defining_move", ""),
+        comp.get("relevance_to_subject", ""),
+        comp.get("selection_reasoning_internal", ""),
+        comp.get("feature_evidence_internal", ""),
+        " ".join(comp.get("diligence_notes_internal") or []),
+        " ".join(str(source) for source in (comp.get("primary_sources") or [])),
+        str(fields),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def _feature_label_from_text(value: Any) -> str:
+    text = str(value or "").lower()
+    for label, terms in FEATURE_MATRIX_COLUMNS:
+        if _feature_terms_in_text(terms, text):
+            return label
+    return ""
+
+
+def _feature_terms_in_text(terms: tuple[str, ...], text: str) -> bool:
+    normalized = text.lower()
+    return any(_term_in_text(term, normalized) for term in terms)
+
+
+def _term_in_text(term: str, text: str) -> bool:
+    term = term.lower()
+    if " " in term or "/" in term or "&" in term or "-" in term:
+        return term in text
+    return re.search(rf"\b{re.escape(term)}s?\b", text) is not None
+
+
 def _feature_in_text(label: str, text: str) -> bool:
-    keys = [_key(label), *ADAPTIVE_FIELD_ALIASES.get(label, [])]
+    feature_label = _feature_label_from_text(label) or label
+    terms = next((terms for candidate, terms in FEATURE_MATRIX_COLUMNS if candidate == feature_label), ())
+    if terms and _feature_terms_in_text(terms, text):
+        return True
+    keys = [_key(feature_label), *ADAPTIVE_FIELD_ALIASES.get(feature_label, [])]
     words = [part for key in keys for part in key.split("_") if len(part) >= 4]
-    if label.lower() in text:
+    if feature_label.lower() in text:
         return True
     return any(word in text for word in words)
 
 
 def _infer_short_value(label: str, text: str) -> str:
     column_needles = {
-        "Lobby Repositioning": [("lobby", "Lobby"), ("arrival", "Arrival"), ("reposition", "Repositioning")],
-        "Tenant Amenities": [("amenit", "Amenity program"), ("lounge", "Lounge"), ("wellness", "Wellness")],
-        "F&B": [("f&b", "F&B"), ("food", "F&B"), ("restaurant", "Restaurant / bar"), ("bar", "Restaurant / bar")],
-        "Outdoor Space": [("outdoor", "Outdoor space"), ("terrace", "Terrace"), ("garden", "Garden"), ("plaza", "Plaza")],
-        "Public Realm": [("public realm", "Public realm"), ("plaza", "Plaza"), ("street", "Street interface")],
+        "Cafe": [("cafe", "Cafe"), ("coffee", "Cafe")],
+        "Restaurant": [("restaurant", "Restaurant"), ("dining", "Dining")],
+        "Food Hall": [("food hall", "Food hall")],
+        "Bar / Lounge": [("bar", "Bar / lounge")],
+        "Sky Lobby": [("sky lobby", "Sky lobby")],
+        "Lobby Seating": [("lobby seating", "Lobby seating"), ("hospitality seating", "Hospitality seating")],
+        "Tenant Lounge": [("tenant lounge", "Tenant lounge"), ("lounge", "Lounge")],
+        "Co-working": [("co-working", "Co-working"), ("coworking", "Co-working")],
+        "Conference Center": [("conference", "Conference center"), ("meeting", "Meeting space")],
+        "Fitness / Wellness": [("fitness", "Fitness"), ("wellness", "Wellness")],
+        "Terraces": [("terrace", "Terrace"), ("roof deck", "Roof deck"), ("outdoor", "Outdoor space")],
+        "Retail": [("retail", "Retail")],
+        "Public Plaza": [("public plaza", "Public plaza"), ("plaza", "Plaza")],
+        "Public Realm": [("public realm", "Public realm"), ("streetscape", "Public realm")],
+        "Branded Amenities": [("branded", "Branded amenities")],
+        "Art / Installations": [("art", "Art / installations"), ("installation", "Art / installations")],
         "Transit Connection": [("transit", "Transit-connected"), ("subway", "Transit-connected"), ("path", "Transit-connected")],
-        "Retail Activation": [("retail", "Retail activation"), ("ground", "Ground-floor retail")],
+        "Sustainability": [("sustainability", "Sustainability"), ("leed", "LEED"), ("adaptive reuse", "Adaptive reuse")],
         "Program": [("office", "Office"), ("residential", "Residential"), ("hotel", "Hotel"), ("retail", "Retail")],
         "Scale": [("sf", "SF reported"), ("square", "SF reported"), ("units", "Units reported"), ("keys", "Keys reported")],
         "Public Interface": [("public", "Public interface"), ("plaza", "Plaza"), ("street", "Street interface")],
@@ -736,6 +1044,18 @@ def _selection_reasoning(candidate: CompCandidate | None, record: dict[str, Any]
     if candidate and candidate.source_notes:
         return " ".join(candidate.source_notes)
     return _clean(record.get("relevance_summary"))
+
+
+def _feature_evidence(record: dict[str, Any], attrs: dict[str, Any]) -> str:
+    parts = [
+        record.get("relevance_summary", ""),
+        " ".join(record.get("review_notes") or []),
+        attrs.get("presentation_takeaway", ""),
+        attrs.get("defining_move", ""),
+        attrs.get("relevance_to_subject", ""),
+        str(attrs.get("adaptive_fields") or {}),
+    ]
+    return " ".join(str(part) for part in parts if part)
 
 
 def _confidence(record: dict[str, Any], sources: list[dict[str, str]]) -> str:

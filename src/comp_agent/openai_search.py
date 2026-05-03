@@ -314,11 +314,14 @@ class OpenAIWebSearchProvider:
                 "Return only JSON. Do not include markdown. Do not invent facts; use null for unknown fields."
             )
             task = f"Find up to {max_candidates} comparable projects for {brief.program_type} in {brief.geography}."
+            if brief.comp_guidance:
+                task += f" User guidance: {brief.comp_guidance}"
         else:
             system = (
                 "You are a real estate research assistant for concept-stage client presentation decks. "
                 "Use live web search and prefer official owner/developer, architect, broker, planning, and reputable market sources. "
                 "If the user provides excluded_user_defined_comps, do not return those projects as discovered candidates; they will be handled separately. "
+                "For initial candidate discovery, include one best source per candidate; deeper source backup happens after approval. "
                 "For each candidate, look for multiple direct, usable hero image URLs from official project, owner, architect, or reputable publication pages. "
                 "Prioritize three image roles: overall exterior or site identity, relevance focus such as lobby/public realm/amenity/base, and supporting detail or program image. "
                 "Prioritize high-quality architectural photography, building facades, lobby/interior spaces, public realm, amenities, and project renderings. "
@@ -327,11 +330,13 @@ class OpenAIWebSearchProvider:
                 "Return only JSON. Do not include markdown. Do not invent facts; use null for unknown fields."
             )
             task = (
-                f"Find up to {max_candidates} defensible comparable projects for a client-facing office repositioning "
-                "or workplace precedent deck. Include the subject building only if useful as context, but candidates "
+                f"Find up to {max_candidates} defensible comparable projects for a client-facing {brief.program_type} "
+                "precedent deck. Include the subject building only if useful as context, but candidates "
                 "should primarily be comparable precedents. Exclude any projects listed in excluded_user_defined_comps. "
                 "Favor projects with public facts that can support a slide."
             )
+            if brief.comp_guidance:
+                task += f" Use this comp guidance when deciding relevance: {brief.comp_guidance}"
         
         user = {
             "project": {
@@ -339,7 +344,10 @@ class OpenAIWebSearchProvider:
                 "address": brief.address,
                 "program_type": brief.program_type,
                 "geography": brief.geography,
+                "scope_summary": brief.scope_summary,
                 "comp_types": brief.comp_types,
+                "design_priorities": brief.design_priorities or brief.amenity_priorities,
+                "comp_guidance": brief.comp_guidance,
                 "radius_miles": brief.radius_miles,
                 "time_horizon_years": brief.time_horizon_years,
                 "filters": brief.filters,
@@ -404,7 +412,7 @@ class OpenAIWebSearchProvider:
                         "missing_attributes": ["strings"],
                         "source_notes": ["short sourced notes"],
                         "sources": [
-                            {"name": "string", "type": "string", "url": "https URL", "notes": "what it supports"}
+                            {"name": "string", "type": "string", "url": "https URL", "notes": "one best initial source supporting candidate selection"}
                         ],
                     }
                 ],
@@ -445,7 +453,8 @@ class OpenAIWebSearchProvider:
             },
             "task": (
                 "Deep dive this approved comp after user approval. Return one enriched candidate record that can feed a Comp Study Deck profile slide. "
-                "Focus on factual project specs, primary sources, image candidates, and non-redundant adaptive_fields responsive to the study intent. "
+                "Focus on factual project specs, exactly three total primary or strong secondary sources when available, image candidates, and non-redundant adaptive_fields responsive to the study intent. "
+                "Preserve the initial discovery source when it is useful, then add two distinct supporting sources during enrichment. "
                 "Adaptive fields should explain why the precedent matters for this specific comp study and should not repeat scale, year/status, owner, architect, type, intervention, or key program. "
                 "Preserve uncertainty instead of guessing."
             ),
@@ -515,7 +524,7 @@ class OpenAIWebSearchProvider:
                         "missing_attributes": ["strings"],
                         "source_notes": ["short sourced notes"],
                         "sources": [
-                            {"name": "string", "type": "string", "url": "https URL", "notes": "what it supports"}
+                            {"name": "string", "type": "string", "url": "https URL", "notes": "what it supports; return three total sources when available"}
                         ],
                     }
                 ],
@@ -622,7 +631,7 @@ class OpenAIWebSearchProvider:
                         "missing_attributes": ["strings"],
                         "source_notes": ["short sourced notes"],
                         "sources": [
-                            {"name": "string", "type": "string", "url": "https URL", "notes": "what it supports"}
+                            {"name": "string", "type": "string", "url": "https URL", "notes": "what it supports; add enough sources to reach three total when available"}
                         ],
                     }
                 ],

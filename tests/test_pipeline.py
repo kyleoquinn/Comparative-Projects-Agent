@@ -8,9 +8,10 @@ from comp_agent.models import CompCandidate, ProjectBrief, SourceLogEntry
 from comp_agent.openai_search import LiveSearchResult, OpenAIWebSearchProvider
 from comp_agent.pipeline import CompPackagePipeline
 from comp_agent.stages import CompAppStages, _apply_field_repair, _audit_deck_data
+from comp_agent.ui import _brief_from_payload, _merge_user_defined_candidates, _must_include_comps_for_discovery
 from comp_agent.workspace import write_json
-from comp_agent.deck_data import DEFAULT_SUMMARY_COLUMNS, build_comp_study_deck_data, build_deck_strategy, normalize_comp_for_deck
-from comp_agent.deck import create_concept_deck_from_data, _matrix_title, _profile_title_text, _wrap_matrix_label
+from comp_agent.deck_data import DEFAULT_SUMMARY_COLUMNS, FEATURE_MATRIX_MAX_COLUMNS, GENERIC_FEATURE_COLUMNS, build_comp_study_deck_data, build_deck_strategy, normalize_comp_for_deck
+from comp_agent.deck import ACCENT, ACCENT_2, FONT, LINE, MUTED, create_concept_deck_from_data, _compact_feature_label, _design_lever_groups, _heat_color, _matrix_header_shared_font_size, _matrix_title, _profile_tags, _profile_title_text, _wrap_matrix_label
 
 
 def test_pipeline_creates_expected_outputs(tmp_path):
@@ -46,6 +47,69 @@ def test_pipeline_creates_expected_outputs(tmp_path):
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
     assert {row["status"] for row in rows} == {"needs_research"}
+
+
+def test_deck_uses_pcp_graphic_standards_palette_and_font():
+    assert FONT == "Segoe UI"
+    assert (str(MUTED), str(LINE)) == ("A9A19B", "BEB6AF")
+    assert (str(ACCENT), str(ACCENT_2)) == ("00A95C", "FFAC2A")
+    assert str(_heat_color(0)) == "FFAC2A"
+    assert str(_heat_color(1)) == "00A95C"
+
+
+def test_project_brief_accepts_future_comp_agent_packet():
+    brief = ProjectBrief.from_dict(
+        {
+            "project_name": "200 Vesey Repositioning",
+            "address": "200 Vesey Street, New York, NY",
+            "program_type": "office repositioning",
+            "geography": "New York City",
+            "scope_summary": "Lobby, tenant amenity, retail, and public realm upgrades.",
+            "design_priorities": ["arrival experience", "tenant amenities"],
+            "agent_inputs": {
+                "comparative_projects": {
+                    "comp_guidance": "Prioritize recent lobby repositioning precedents.",
+                    "comp_types": ["office lobby repositioning", "tenant amenity upgrade"],
+                    "must_include_comps": [
+                        {"name": "660 Fifth Avenue", "location": "New York, NY", "note": "Lobby precedent"}
+                    ],
+                }
+            },
+        }
+    )
+
+    assert brief.scope_summary.startswith("Lobby")
+    assert brief.design_priorities == ["arrival experience", "tenant amenities"]
+    assert brief.amenity_priorities == ["arrival experience", "tenant amenities"]
+    assert brief.comp_guidance == "Prioritize recent lobby repositioning precedents."
+    assert brief.comp_types == ["office lobby repositioning", "tenant amenity upgrade"]
+    assert brief.must_include_comps == [{"name": "660 Fifth Avenue", "location": "New York, NY", "note": "Lobby precedent"}]
+
+
+def test_future_packet_must_include_comps_merge_with_poc_ui_entries():
+    brief = _brief_from_payload(
+        {
+            "project_name": "200 Vesey Repositioning",
+            "address": "200 Vesey Street, New York, NY",
+            "program_type": "office repositioning",
+            "geography": "New York City",
+            "comparative_projects": {
+                "must_include_comps": [
+                    {"name": "660 Fifth Avenue", "location": "New York, NY", "note": "From packet"}
+                ]
+            },
+        }
+    )
+
+    must_include = _must_include_comps_for_discovery(
+        brief,
+        "660 5th Ave | New York, NY | Duplicate from UI\n343 Madison | New York, NY | UI add",
+    )
+    candidates = _merge_user_defined_candidates(brief, [], must_include)
+
+    assert [item["comp_name"] for item in candidates] == ["660 Fifth Avenue", "343 Madison"]
+    assert candidates[0]["candidate_source"] == "user_defined"
+    assert candidates[0]["known_attributes"]["presentation_takeaway"] == "From packet"
 
 
 def test_staged_poc_creates_reviewable_single_comp_package(tmp_path):
@@ -332,7 +396,7 @@ def test_live_and_user_defined_approved_comps_both_receive_enrichment(tmp_path):
     stages.agent.search_provider = provider
     stages.research(brief)
 
-    assert provider.enriched == ["live-1", "user-1"]
+    assert set(provider.enriched) == {"live-1", "user-1"}
 
 
 def test_candidate_repair_runs_only_for_incomplete_enrichment(tmp_path):
@@ -543,6 +607,56 @@ def test_adaptive_facts_prefer_exact_labels_and_avoid_universal_duplicates():
     assert "Positioning Intent" not in normalized["adaptive_fields"]
 
 
+def test_adaptive_facts_keep_useful_repaired_labels_when_profile_labels_mismatch():
+    normalized = normalize_comp_for_deck(
+        {
+            "comp_id": "test",
+            "project_name": "Repaired Comp",
+            "location": "New York, NY",
+            "program_type": "office repositioning",
+            "status": "source_snapshot",
+            "completion_year": "2026",
+            "developer_owner": "Owner",
+            "architect_designer": "Architect",
+            "relevance_summary": "Useful precedent.",
+            "confidence": "medium",
+            "source_count": 2,
+            "review_notes": [],
+        },
+        CompCandidate(
+            comp_id="test",
+            comp_name="Repaired Comp",
+            location="New York, NY",
+            comp_type="office repositioning",
+            relevance_score=90,
+            status="source_snapshot",
+            known_attributes={
+                "program_type": "office repositioning",
+                "adaptive_fields": {
+                    "Arrival Sequence": "Layered street-to-lobby arrival with hospitality cues.",
+                    "Amenity Stack": "Tenant lounge, conference space, and wellness program.",
+                    "Site Integration": "Improved base condition and stronger connection to transit.",
+                },
+            },
+        ),
+        {
+            "comparison_matrix_columns": ["Program"],
+            "profile_adaptive_fields": [
+                "Podium / Base Strategy",
+                "Arrival / Lobby Move",
+                "Amenity / User Experience",
+                "Street / Public Interface",
+                "Positioning Intent",
+            ],
+        },
+        [],
+    )
+
+    assert normalized["adaptive_fields"]["Arrival Sequence"].startswith("Layered street-to-lobby")
+    assert normalized["adaptive_fields"]["Amenity Stack"].startswith("Tenant lounge")
+    assert normalized["adaptive_fields"]["Site Integration"].startswith("Improved base")
+
+
 def test_adaptive_fact_values_are_shortened_without_ellipsis():
     normalized = normalize_comp_for_deck(
         {
@@ -582,7 +696,10 @@ def test_adaptive_fact_values_are_shortened_without_ellipsis():
 
     value = normalized["adaptive_fields"]["Podium / Base Strategy"]
     assert "…" not in value
-    assert len(value) <= 86
+    lines = value.splitlines()
+    assert 1 <= len(lines) <= 2
+    assert all(len(line) <= 54 for line in lines)
+    assert len(lines[-1]) >= 28
 
 
 def test_profile_title_is_limited_to_two_compact_lines():
@@ -593,12 +710,85 @@ def test_profile_title_is_limited_to_two_compact_lines():
     assert all(len(line) <= 34 for line in lines)
 
 
+def test_profile_tags_prefer_key_features_over_generic_labels():
+    tags = _profile_tags(
+        {
+            "project_type": "Office",
+            "intervention_type": "Lobby repositioning",
+            "key_program": "Workplace",
+            "adaptive_fields": {"Arrival / Lobby Move": "Hospitality arrival"},
+            "comparison_flags": {
+                "Tenant Lounge": "●",
+                "Terraces": "●",
+                "Cafe": "●",
+                "Restaurant": "—",
+            },
+        }
+    )
+
+    assert tags[:3] == ["Lounges", "Terraces", "Cafe"]
+    assert "Office" not in tags[:3]
+    assert "Lobby repositioning" not in tags[:3]
+
+
+def test_design_levers_are_dynamic_from_feature_frequency():
+    deck_data = {
+        "deck_strategy": {
+            "comparison_matrix_columns": [
+                "Terraces",
+                "Public Plaza",
+                "Retail",
+                "Transit Connection",
+                "Tenant Lounge",
+                "Fitness / Wellness",
+            ]
+        },
+        "comps": [
+            {
+                "comparison_flags": {
+                    "Terraces": "●",
+                    "Public Plaza": "●",
+                    "Retail": "●",
+                    "Transit Connection": "●",
+                    "Tenant Lounge": "—",
+                    "Fitness / Wellness": "—",
+                }
+            }
+            for _ in range(4)
+        ]
+        + [
+            {
+                "comparison_flags": {
+                    "Terraces": "●",
+                    "Public Plaza": "●",
+                    "Retail": "—",
+                    "Transit Connection": "—",
+                    "Tenant Lounge": "●",
+                    "Fitness / Wellness": "●",
+                }
+            }
+            for _ in range(2)
+        ],
+    }
+
+    groups = _design_lever_groups(deck_data)
+    titles = [group["title"] for group in groups]
+
+    assert titles[0] in {"Outdoor Amenity Value", "Public-Facing Activation"}
+    assert "Outdoor Amenity Value" in titles
+    assert "Public-Facing Activation" in titles
+    assert len(groups) <= 5
+    assert all(group["features"] for group in groups)
+
+
 def test_comparison_columns_are_selected_from_enriched_adaptive_facts():
     brief = ProjectBrief(
         project_name="Dynamic Matrix",
         address="200 Main St",
         program_type="office repositioning",
         geography="New York, NY",
+        design_priorities=["arrival experience", "tenant lounge", "terraces", "food and beverage"],
+        comp_guidance="Prioritize cafe, restaurant, sky lobby, lounge spaces, co-working, terraces, and branded amenities.",
     )
     candidate = CompCandidate(
         comp_id="comp-1",
@@ -610,9 +800,9 @@ def test_comparison_columns_are_selected_from_enriched_adaptive_facts():
         known_attributes={
             "program_type": "office repositioning",
             "adaptive_fields": {
-                "Arrival / Lobby Move": "Hospitality-scaled arrival",
-                "Street / Public Interface": "Transparent public frontage",
-                "Amenity / User Experience": "Tenant lounge and wellness program",
+                "Arrival / Lobby Move": "Hospitality-scaled arrival with lobby seating and a sky lobby.",
+                "Street / Public Interface": "Transparent public frontage with a public plaza and retail.",
+                "Amenity / User Experience": "Tenant lounge, co-working, terraces, cafe, restaurant, and branded amenities.",
             },
         },
     )
@@ -626,7 +816,7 @@ def test_comparison_columns_are_selected_from_enriched_adaptive_facts():
             "completion_year": "2026",
             "developer_owner": "Owner",
             "architect_designer": "Architect",
-            "relevance_summary": "Useful precedent.",
+            "relevance_summary": "Useful precedent with a tenant lounge, roof terrace, cafe, restaurant, and public plaza.",
             "confidence": "medium",
             "source_count": 1,
             "review_notes": [],
@@ -636,11 +826,107 @@ def test_comparison_columns_are_selected_from_enriched_adaptive_facts():
     deck_data = build_comp_study_deck_data(brief, records, [candidate], [])
 
     columns = deck_data["deck_strategy"]["comparison_matrix_columns"]
-    assert columns[:3] == ["Arrival / Lobby Move", "Amenity / User Experience", "Street / Public Interface"]
-    assert deck_data["comps"][0]["comparison_flags"]["Arrival / Lobby Move"] == "●"
+    assert "Tenant Lounge" in columns
+    assert "Terraces" in columns
+    assert "Cafe" in columns
+    assert "Restaurant" in columns
+    assert "Arrival / Lobby Move" not in columns
+    assert deck_data["comps"][0]["comparison_flags"]["Tenant Lounge"] == "●"
+
+
+def test_feature_matrix_normalizes_specific_amenities():
+    brief = ProjectBrief(
+        project_name="Feature Normalization",
+        address="200 Main St",
+        program_type="office repositioning",
+        geography="New York, NY",
+        design_priorities=["tenant lounge", "terraces", "cafe", "restaurant", "food hall"],
+    )
+    records = [
+        {
+            "comp_id": "comp-1",
+            "project_name": "Comp One",
+            "location": "New York, NY",
+            "program_type": "office repositioning",
+            "status": "source_snapshot",
+            "completion_year": "2026",
+            "developer_owner": "Owner",
+            "architect_designer": "Architect",
+            "relevance_summary": "Club lounge, lounge spaces, roof terrace, outdoor deck, cafe, restaurant, and food hall.",
+            "confidence": "medium",
+            "source_count": 1,
+            "review_notes": ["Tenant lounge and terraces verified."],
+        }
+    ]
+
+    deck_data = build_comp_study_deck_data(brief, records, [], [])
+    columns = deck_data["deck_strategy"]["comparison_matrix_columns"]
+
+    assert "Tenant Lounge" in columns
+    assert "Terraces" in columns
+    assert "Cafe" in columns
+    assert "Restaurant" in columns
+    assert "Food Hall" in columns
+
+
+def test_feature_matrix_uses_high_resolution_column_count():
+    brief = ProjectBrief(
+        project_name="High Resolution Matrix",
+        address="200 Main St",
+        program_type="office repositioning",
+        geography="New York, NY",
+        design_priorities=["arrival", "tenant amenities", "public realm"],
+        comp_guidance="Cafe, restaurant, food hall, sky lobby, lobby seating, tenant lounge, co-working, conference center, wellness, terraces, retail, public plaza, branded amenities, art, transit, sustainability.",
+    )
+    features = "Cafe restaurant food hall sky lobby lobby seating tenant lounge co-working conference center fitness wellness terraces retail public plaza branded amenities art installations transit sustainability."
+    records = [
+        {
+            "comp_id": f"comp-{index}",
+            "project_name": f"Comp {index}",
+            "location": "New York, NY",
+            "program_type": "office repositioning",
+            "status": "source_snapshot",
+            "completion_year": "2026",
+            "developer_owner": "Owner",
+            "architect_designer": "Architect",
+            "relevance_summary": features,
+            "confidence": "medium",
+            "source_count": 1,
+            "review_notes": [],
+        }
+        for index in range(3)
+    ]
+
+    deck_data = build_comp_study_deck_data(brief, records, [], [])
+    columns = deck_data["deck_strategy"]["comparison_matrix_columns"]
+
+    assert 10 <= len(columns) <= FEATURE_MATRIX_MAX_COLUMNS
+    assert not (set(columns) & GENERIC_FEATURE_COLUMNS)
+    assert "Cafe" in columns
+    assert "Restaurant" in columns
+    assert "Tenant Lounge" in columns
+    assert "Terraces" in columns
+    assert "Public Plaza" in columns
 
 
 def test_custom_comparison_matrix_deck_smoke(tmp_path):
+    columns = [
+        "Cafe",
+        "Restaurant",
+        "Food Hall",
+        "Sky Lobby",
+        "Lobby Seating",
+        "Tenant Lounge",
+        "Co-working",
+        "Conference Center",
+        "Fitness / Wellness",
+        "Terraces",
+        "Retail",
+        "Public Plaza",
+        "Branded Amenities",
+        "Art / Installations",
+        "Transit Connection",
+    ]
     deck_data = {
         "subject_project": {"address": "200 Main St", "city": "New York", "state_or_country": "NY"},
         "deck_strategy": {
@@ -649,7 +935,7 @@ def test_custom_comparison_matrix_deck_smoke(tmp_path):
             "cover_intent_label": "Offices in New York",
             "study_focus_label": "Comparable project study for early concept positioning",
             "summary_matrix_columns": DEFAULT_SUMMARY_COLUMNS,
-            "comparison_matrix_columns": ["Arrival / Lobby Move", "Amenity / User Experience", "Street / Public Interface"],
+            "comparison_matrix_columns": columns,
         },
         "comps": [
             {
@@ -663,7 +949,7 @@ def test_custom_comparison_matrix_deck_smoke(tmp_path):
                 "intervention_type": "Lobby repositioning",
                 "key_program": "Workplace",
                 "adaptive_fields": {},
-                "comparison_flags": {"Arrival / Lobby Move": "●", "Amenity / User Experience": "●", "Street / Public Interface": "—"},
+                "comparison_flags": {column: "●" for column in columns},
                 "relevance_to_subject": "Relevant precedent.",
                 "hero_image": {"path": "", "url": "", "caption": "", "credit": "", "source_url": "", "image_confidence": "not_available"},
                 "image_package": {"overall": {}, "focus": {}, "detail": {}},
@@ -730,10 +1016,26 @@ def test_comparison_matrix_paginates_by_fixed_row_capacity(tmp_path):
 
 def test_matrix_title_and_header_wrapping_are_presentation_friendly():
     assert _matrix_title({"deck_strategy": {"project_type_label": "Office Repositioning"}}) == "Features and Amenities Matrix"
-    label = _wrap_matrix_label("Amenity / User Experience")
+    label = _wrap_matrix_label("Art / Installations", 0.62)
 
-    assert label == "Amenity\nExperience"
-    assert all(len(line) <= 18 for line in label.splitlines())
+    assert label == "Art"
+    assert _wrap_matrix_label("Lobby Seating", 0.62) == "Lobby\nSeating"
+    assert _wrap_matrix_label("Sky Lobby", 0.62) == "Sky\nLobbies"
+    assert _wrap_matrix_label("Co-working", 0.62) == "Cowork"
+    assert _compact_feature_label("Tenant Lounge") == "Lounges"
+    assert _compact_feature_label("Lobby Seating") == "Seating"
+    assert _compact_feature_label("Fitness / Wellness") == "Wellness"
+    assert _compact_feature_label("Conference Center") == "Meetings"
+    assert _wrap_matrix_label("Tenant Lounge", 0.62) == "Tenant\nLounges"
+    assert _wrap_matrix_label("Food Hall", 0.62) == "Food\nHalls"
+    assert _compact_feature_label("Food Hall") == "Food Halls"
+    assert _compact_feature_label("Sustainability") == "Green"
+    assert _compact_feature_label("Concierge / Hospitality") == "Concierge"
+    wrapped_labels = [_wrap_matrix_label(item, 0.62) for item in ["Art / Installations", "Co-working", "Fitness / Wellness", "Food Hall", "Public Realm", "Lobby Seating"]]
+    assert all("-" not in item for item in wrapped_labels)
+    assert all("/n" not in item and "\\n" not in item for item in wrapped_labels)
+    assert _matrix_header_shared_font_size(wrapped_labels, 0.62) == 5
+    assert _matrix_header_shared_font_size(["Cafe", "Retail"], 0.9) == 7
 
 
 def test_takeaways_are_trend_only_and_client_facing():
@@ -743,7 +1045,7 @@ def test_takeaways_are_trend_only_and_client_facing():
         program_type="office repositioning",
         geography="New York, NY",
     )
-    columns = ["Arrival / Lobby Move", "Amenity / User Experience", "Street / Public Interface", "Outdoor Space"]
+    columns = ["Lobby Seating", "Tenant Lounge", "Fitness / Wellness", "Terraces", "Retail", "Public Plaza"]
     records = []
     candidates = []
     for index in range(4):
@@ -776,10 +1078,12 @@ def test_takeaways_are_trend_only_and_client_facing():
                     "program_type": "office repositioning",
                     "intervention_type": "Lobby repositioning",
                     "adaptive_fields": {
-                        "Arrival / Lobby Move": "Hospitality arrival",
-                        "Amenity / User Experience": "Tenant lounge and wellness",
-                        "Street / Public Interface": "Transparent frontage",
-                        "Outdoor Space": "Terrace and garden",
+                        "Lobby Seating": "Hospitality arrival seating",
+                        "Tenant Lounge": "Tenant lounge",
+                        "Fitness / Wellness": "Wellness program",
+                        "Terraces": "Terrace and garden",
+                        "Retail": "Retail activation",
+                        "Public Plaza": "Transparent frontage and public plaza",
                     },
                 },
             )
@@ -792,6 +1096,9 @@ def test_takeaways_are_trend_only_and_client_facing():
     assert len(trends) >= 5
     assert all("implication" not in item for item in deck_data["takeaways"])
     assert not any("public web sources" in trend.lower() or "verify" in trend.lower() for trend in trends)
+    assert any("activated lobby spaces" in trend for trend in trends)
+    assert any("terraces with adjacent amenity program" in trend for trend in trends)
+    assert any("standard offering" in trend for trend in trends)
 
 
 def _complete_candidate(candidate: CompCandidate) -> CompCandidate:
@@ -810,7 +1117,11 @@ def _complete_candidate(candidate: CompCandidate) -> CompCandidate:
             "architect_designer": "Architect",
             "intervention_type": "Lobby repositioning",
             "presentation_takeaway": "Useful sourced precedent.",
-            "_sources": [{"name": "Source", "type": "official", "url": "https://example.com"}],
+            "_sources": [
+                {"name": "Source 1", "type": "official", "url": "https://example.com/1"},
+                {"name": "Source 2", "type": "architect", "url": "https://example.com/2"},
+                {"name": "Source 3", "type": "publication", "url": "https://example.com/3"},
+            ],
             "adaptive_fields": {
                 "Podium / Base Strategy": "Reworked base",
                 "Arrival / Lobby Move": "Hospitality arrival",

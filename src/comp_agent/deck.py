@@ -681,8 +681,22 @@ def _slide_title(slide, title: str, subtitle: str) -> None:
     _add_rule(slide, 0.55, 1.08, 12.25)
 
 
+def _normalize_value_text(text: Any) -> str:
+    """Normalize a value before rendering: strip embedded newlines/tabs and
+    collapse runs of whitespace.
+
+    Generative content sometimes ships with hard line breaks that force the
+    textbox to wrap mid-thought regardless of its width. Replacing those
+    with single spaces lets PowerPoint's native word-wrap pick the
+    breakpoints based on the actual textbox width.
+    """
+    if text is None:
+        return ""
+    return " ".join(str(text).replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
+
+
 def _truncate_for_display(text: Any, max_chars: int) -> str:
-    s = "" if text is None else str(text)
+    s = _normalize_value_text(text)
     if len(s) <= max_chars:
         return s
     return s[: max(1, max_chars - 1)].rstrip() + "…"
@@ -711,9 +725,13 @@ def _facts_card(
     for label, value in rows:
         if row_y + row_height > bottom:
             break
-        display_value = _truncate_for_display(value, max_value_chars) if max_value_chars else value
-        _add_text(slide, label, x + 0.18, row_y, 1.25, 0.18, size=5, bold=True, color=MUTED)
-        _add_text(slide, display_value, x + 1.47, row_y, w - 1.65, row_height, size=value_size)
+        display_value = (
+            _truncate_for_display(value, max_value_chars)
+            if max_value_chars
+            else _normalize_value_text(value)
+        )
+        _add_text(slide, label, x + 0.18, row_y, 0.95, 0.18, size=5, bold=True, color=MUTED)
+        _add_text(slide, display_value, x + 1.18, row_y, w - 1.35, row_height, size=value_size)
         row_y += row_height
 
 

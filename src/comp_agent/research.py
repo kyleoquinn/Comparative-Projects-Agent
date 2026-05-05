@@ -8,6 +8,7 @@ from comp_agent.models import (
     SourceLogEntry,
     SourceQuery,
 )
+from comp_agent.discovery import DEFAULT_TARGET_COUNT, MAX_TARGET_COUNT, discover_with_target
 from comp_agent.openai_search import OpenAIWebSearchProvider
 from comp_agent.workspace import slugify
 
@@ -209,19 +210,26 @@ class CompResearchAgent:
     def _live_search(self, brief: ProjectBrief):
         if not self.search_provider:
             return None
-        cache_key = f"{brief.project_name}|{brief.address}|{brief.program_type}|{brief.geography}|{brief.comp_types}"
+        target_count = _max_candidates_for(brief)
+        cache_key = f"{brief.project_name}|{brief.address}|{brief.program_type}|{brief.geography}|{brief.comp_types}|{target_count}"
         if cache_key not in self._live_search_cache:
-            max_candidates = _max_candidates_for(brief)
-            self._live_search_cache[cache_key] = self.search_provider.discover(brief, max_candidates=max_candidates)
+            # Wide-funnel discovery: planner -> parallel fan-out -> dedupe -> top-up.
+            # See ``discovery.discover_with_target`` for the full flow. The
+            # returned ``DiscoveryResult`` is shape-compatible with
+            # ``LiveSearchResult`` for the fields downstream callers read
+            # (``candidates``, ``source_log``, ``warnings``).
+            self._live_search_cache[cache_key] = discover_with_target(
+                self.search_provider, brief, target_count
+            )
         return self._live_search_cache[cache_key]
 
 
 def _max_candidates_for(brief: ProjectBrief) -> int:
     raw_value = brief.filters.get("max_comps") or brief.filters.get("max_candidates")
     if raw_value in (None, ""):
-        raw_value = __import__("os").getenv("COMP_AGENT_MAX_CANDIDATES", "5")
+        raw_value = __import__("os").getenv("COMP_AGENT_MAX_CANDIDATES", str(DEFAULT_TARGET_COUNT))
     try:
         value = int(raw_value)
     except (TypeError, ValueError):
-        return 5
-    return max(1, min(12, value))
+        return DEFAULT_TARGET_COUNT
+    return max(1, min(MAX_TARGET_COUNT, value))

@@ -787,7 +787,7 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div>
             <label>Number of comps</label>
-            <input id="max_comps" type="number" min="1" max="12" placeholder="e.g., 5">
+            <input id="max_comps" type="number" min="1" max="50" placeholder="e.g., 10">
           </div>
         </div>
         <label>Design priorities</label>
@@ -880,7 +880,7 @@ INDEX_HTML = r"""<!doctype html>
         scope_summary: value('scope_summary'),
         geography: value('geography'),
         design_priorities: designPriorities,
-        max_comps: Number(value('max_comps') || 5),
+        max_comps: Number(value('max_comps') || 10),
         comp_types: compTypes.join(', '),
         amenity_priorities: designPriorities.join(', '),
         radius_miles: Number(value('radius_miles') || 3),

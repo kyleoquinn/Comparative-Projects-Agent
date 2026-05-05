@@ -246,6 +246,404 @@ class OpenAIWebSearchProvider:
             }
         return parsed
 
+    def plan_axes(self, brief: ProjectBrief, target_count: int) -> dict[str, Any]:
+        """Generate diverse search axes for fan-out discovery.
+
+        Returns a dict with keys: ``axes`` (list of axis dicts) and ``warnings``.
+        Each axis dict has: ``label`` (short tag), ``prompt_fragment`` (injected
+        into the discovery prompt), ``target_count`` (per-axis comp count).
+        Falls back to a single generic axis if the planner call fails or is
+        unavailable so the orchestrator can still fan out.
+        """
+        if not self.api_key:
+            return {
+                "axes": [
+                    {
+                        "label": "general comparable projects",
+                        "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
+                        "target_count": target_count,
+                    }
+                ],
+                "warnings": ["OPENAI_API_KEY is not set; planner skipped, using single generic axis."],
+            }
+        payload = {
+            "model": self.model,
+            "reasoning": {"effort": "low"},
+            "input": self._build_planner_input(brief, target_count),
+        }
+        try:
+            response = self._post_json(payload)
+        except RuntimeError as error:
+            logger.warning(f"Planner call failed: {error}; falling back to single generic axis.")
+            return {
+                "axes": [
+                    {
+                        "label": "general comparable projects",
+                        "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
+                        "target_count": target_count,
+                    }
+                ],
+                "warnings": [f"Planner call failed: {error}"],
+            }
+        parsed = _parse_json_object(_response_output_text(response))
+        if not parsed or not isinstance(parsed.get("axes"), list) or not parsed["axes"]:
+            logger.warning("Planner returned unparseable axes; falling back to single generic axis.")
+            return {
+                "axes": [
+                    {
+                        "label": "general comparable projects",
+                        "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
+                        "target_count": target_count,
+                    }
+                ],
+                "warnings": ["Planner returned no usable axes."],
+            }
+        axes = []
+        for item in parsed["axes"]:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            fragment = str(item.get("prompt_fragment") or "").strip()
+            if not label or not fragment:
+                continue
+            try:
+                axis_target = int(item.get("target_count") or 0)
+            except (TypeError, ValueError):
+                axis_target = 0
+            axes.append({
+                "label": label,
+                "prompt_fragment": fragment,
+                "target_count": max(1, axis_target) if axis_target else max(1, target_count // max(1, len(parsed["axes"]))),
+            })
+        if not axes:
+            return {
+                "axes": [
+                    {
+                        "label": "general comparable projects",
+                        "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
+                        "target_count": target_count,
+                    }
+                ],
+                "warnings": ["Planner returned only invalid axes; using single generic axis."],
+            }
+        return {"axes": axes, "warnings": [str(w) for w in parsed.get("warnings", []) if w]}
+
+    def discover_axis(
+        self,
+        brief: ProjectBrief,
+        axis: dict[str, Any],
+        *,
+        exclude: list[dict[str, str]] | None = None,
+        steer: str | None = None,
+    ) -> LiveSearchResult:
+        """Run one axis-specific discovery call.
+
+        Mirrors the existing single-call discovery path, but:
+        - injects ``axis['prompt_fragment']`` into the search guidance
+        - threads an optional exclusion list (``[{name, location}, ...]``) into
+          the user payload so the model avoids returning already-found comps
+        - retries once with a simplified prompt on timeout, matching the
+          existing single-call behavior
+        """
+        if not self.api_key:
+            return LiveSearchResult(warnings=["OPENAI_API_KEY is not set; axis discovery skipped."])
+        axis_label = str(axis.get("label") or "axis")
+        axis_target = max(1, int(axis.get("target_count") or 5))
+        exclude_list = list(exclude or [])
+        result = self._attempt_axis_search(brief, axis, exclude_list, steer, retry_count=0, use_simpler_query=False)
+        if not result.candidates and any("timed out" in w.lower() for w in result.warnings):
+            logger.warning(f"Axis '{axis_label}' timed out with no candidates, retrying with simpler query")
+            result = self._attempt_axis_search(brief, axis, exclude_list, steer, retry_count=1, use_simpler_query=True)
+        for candidate in result.candidates:
+            candidate.known_attributes = {**candidate.known_attributes, "_axis_label": axis_label}
+        logger.info(f"Axis '{axis_label}' returned {len(result.candidates)} candidates (target {axis_target})")
+        return result
+
+    def _attempt_axis_search(
+        self,
+        brief: ProjectBrief,
+        axis: dict[str, Any],
+        exclude: list[dict[str, str]],
+        steer: str | None,
+        retry_count: int,
+        use_simpler_query: bool,
+    ) -> LiveSearchResult:
+        start_time = time.time()
+        axis_label = str(axis.get("label") or "axis")
+        logger.info(f"Axis '{axis_label}' attempt {retry_count + 1}, simpler_query={use_simpler_query}")
+        payload = {
+            "model": self.model,
+            "reasoning": {"effort": "low"},
+            "tools": [
+                {
+                    "type": "web_search",
+                    "external_web_access": True,
+                    "user_location": {
+                        "type": "approximate",
+                        "country": "US",
+                        "city": "New York",
+                        "region": "New York",
+                        "timezone": "America/New_York",
+                    },
+                }
+            ],
+            "tool_choice": "auto",
+            "include": ["web_search_call.action.sources"],
+            "input": self._build_axis_input(brief, axis, exclude, steer, use_simpler_query=use_simpler_query),
+        }
+        try:
+            response = self._post_json(payload)
+        except RuntimeError as error:
+            elapsed = time.time() - start_time
+            logger.warning(f"Axis '{axis_label}' attempt {retry_count + 1} failed after {elapsed:.1f}s: {error}")
+            return LiveSearchResult(warnings=[str(error)])
+        parsed = _parse_json_object(_response_output_text(response))
+        if not parsed:
+            return LiveSearchResult(
+                source_log=_source_log_from_response(response),
+                warnings=[f"Axis '{axis_label}' returned unparseable JSON."],
+            )
+        max_candidates = max(1, int(axis.get("target_count") or 5))
+        candidates = _candidates_from_payload(brief, parsed, max_candidates=max_candidates)
+        source_log = _source_log_from_payload(parsed) or _source_log_from_response(response)
+        return LiveSearchResult(candidates=candidates, source_log=source_log, warnings=[str(w) for w in parsed.get("warnings", []) if w])
+
+    def dedupe_check(self, near_misses: list[dict[str, Any]]) -> dict[str, Any]:
+        """Ask the model whether ambiguous candidate pairs refer to the same project.
+
+        Input ``near_misses`` is a list of ``{pair_id, left, right}`` dicts where
+        ``left`` and ``right`` each have ``name`` and ``location`` (and optionally
+        ``year`` or other context). Returns ``{"decisions": [{pair_id, same_project, canonical_choice}], "warnings": [...]}``.
+        Falls back to all-distinct on any failure (favors over-delivery).
+        """
+        if not near_misses:
+            return {"decisions": [], "warnings": []}
+        if not self.api_key:
+            return {
+                "decisions": [{"pair_id": p.get("pair_id"), "same_project": False, "canonical_choice": None} for p in near_misses],
+                "warnings": ["OPENAI_API_KEY is not set; dedup check skipped."],
+            }
+        payload = {
+            "model": self.model,
+            "reasoning": {"effort": "low"},
+            "input": self._build_dedupe_input(near_misses),
+        }
+        try:
+            response = self._post_json(payload)
+        except RuntimeError as error:
+            logger.warning(f"Dedup call failed: {error}; treating all near-misses as distinct.")
+            return {
+                "decisions": [{"pair_id": p.get("pair_id"), "same_project": False, "canonical_choice": None} for p in near_misses],
+                "warnings": [f"Dedup call failed: {error}"],
+            }
+        parsed = _parse_json_object(_response_output_text(response))
+        if not parsed or not isinstance(parsed.get("decisions"), list):
+            return {
+                "decisions": [{"pair_id": p.get("pair_id"), "same_project": False, "canonical_choice": None} for p in near_misses],
+                "warnings": ["Dedup call returned unparseable JSON; treating all as distinct."],
+            }
+        return {"decisions": parsed["decisions"], "warnings": [str(w) for w in parsed.get("warnings", []) if w]}
+
+    def _build_planner_input(self, brief: ProjectBrief, target_count: int) -> list[dict[str, str]]:
+        axis_count = max(2, min(10, (target_count + 4) // 5))
+        per_axis = max(3, (target_count + axis_count - 1) // axis_count)
+        system = (
+            "You are a real estate research strategist. "
+            "Given a project brief, propose distinct search axes for finding diverse comparable projects. "
+            "Each axis should encode a meaningfully different angle (intervention type, scale, geography sub-region, era, programmatic emphasis, market positioning). "
+            "Avoid overlap between axes; emphasize diversity. "
+            "Return only JSON. Do not include markdown."
+        )
+        user = {
+            "project": {
+                "name": brief.project_name,
+                "address": brief.address,
+                "program_type": brief.program_type,
+                "geography": brief.geography,
+                "scope_summary": brief.scope_summary,
+                "comp_types": brief.comp_types,
+                "design_priorities": brief.design_priorities or brief.amenity_priorities,
+                "amenity_priorities": brief.amenity_priorities,
+                "presentation_priorities": brief.presentation_priorities,
+                "comp_guidance": brief.comp_guidance,
+                "filters": brief.filters,
+            },
+            "target_total_comps": target_count,
+            "task": (
+                f"Propose exactly {axis_count} diverse search axes that together can surface {target_count} distinct comparable projects. "
+                "Each axis must describe a real angle for searching (not a generic phrase). "
+                f"Allocate target_count per axis so the sum reaches {target_count}; ~{per_axis} per axis is a reasonable starting point. "
+                "Each prompt_fragment should be 1-2 sentences that can be injected into a downstream live web-search prompt."
+            ),
+            "required_json_shape": {
+                "axes": [
+                    {
+                        "label": "short tag, e.g. 'adaptive reuse podiums'",
+                        "prompt_fragment": "1-2 sentence directive guiding the live web search for this axis",
+                        "target_count": "integer, comps to find from this axis",
+                    }
+                ],
+                "warnings": ["strings"],
+            },
+        }
+        return [
+            {"role": "developer", "content": system},
+            {"role": "user", "content": json.dumps(user, indent=2)},
+        ]
+
+    def _build_axis_input(
+        self,
+        brief: ProjectBrief,
+        axis: dict[str, Any],
+        exclude: list[dict[str, str]],
+        steer: str | None,
+        *,
+        use_simpler_query: bool,
+    ) -> list[dict[str, str]]:
+        axis_label = str(axis.get("label") or "axis")
+        axis_fragment = str(axis.get("prompt_fragment") or "")
+        axis_target = max(1, int(axis.get("target_count") or 5))
+        if use_simpler_query:
+            system = (
+                "You are a real estate research assistant. "
+                "Use live web search to find comparable projects. "
+                f"Search axis: {axis_label}. {axis_fragment} "
+                "Focus on basic project facts: name, location, comp_type, and one source URL. "
+                "Skip detailed image searches and extensive attributes. "
+                "Return only JSON. Do not include markdown. Do not invent facts; use null for unknown fields."
+            )
+            task = f"Find up to {axis_target} comparable projects matching this axis for {brief.program_type} in {brief.geography}."
+        else:
+            system = (
+                "You are a real estate research assistant for concept-stage client presentation decks. "
+                f"Search axis: {axis_label}. {axis_fragment} "
+                "Use live web search and prefer official owner/developer, architect, broker, planning, and reputable market sources. "
+                "If the user provides excluded_user_defined_comps or must_not_include, do not return those projects as discovered candidates. "
+                "For initial candidate discovery, include one best source per candidate; deeper source backup happens after approval. "
+                "For each candidate, look for multiple direct, usable hero image URLs from official project, owner, architect, or reputable publication pages. "
+                "Prioritize three image roles: overall exterior or site identity, relevance focus such as lobby/public realm/amenity/base, and supporting detail or program image. "
+                "Prioritize high-quality architectural photography, building facades, lobby/interior spaces, public realm, amenities, and project renderings. "
+                "Only include direct image URLs ending in .jpg, .jpeg, .png, or .webp. If no direct image URL is available, set hero_image.image_confidence to not_available. "
+                "Include alternative image URLs in hero_image.fallback_urls array if found. "
+                "Return only JSON. Do not include markdown. Do not invent facts; use null for unknown fields."
+            )
+            task = (
+                f"Find up to {axis_target} defensible comparable projects on this search axis for a client-facing {brief.program_type} "
+                "precedent deck. Include the subject building only if useful as context, but candidates "
+                "should primarily be comparable precedents. Exclude any projects listed in excluded_user_defined_comps or must_not_include. "
+                "Favor projects with public facts that can support a slide."
+            )
+            if brief.comp_guidance:
+                task += f" Use this comp guidance when deciding relevance: {brief.comp_guidance}"
+        if steer:
+            task += f" Replacement steering from the user: {steer}. Bias your search accordingly."
+        user = {
+            "project": {
+                "name": brief.project_name,
+                "address": brief.address,
+                "program_type": brief.program_type,
+                "geography": brief.geography,
+                "scope_summary": brief.scope_summary,
+                "comp_types": brief.comp_types,
+                "design_priorities": brief.design_priorities or brief.amenity_priorities,
+                "comp_guidance": brief.comp_guidance,
+                "radius_miles": brief.radius_miles,
+                "time_horizon_years": brief.time_horizon_years,
+                "filters": brief.filters,
+                "excluded_user_defined_comps": _excluded_user_defined_comps(brief),
+            },
+            "search_axis": {
+                "label": axis_label,
+                "prompt_fragment": axis_fragment,
+            },
+            "must_not_include": exclude,
+            "task": task,
+            "required_json_shape": {
+                "candidates": [
+                    {
+                        "project_name": "string",
+                        "location": "string",
+                        "comp_type": "adaptive reuse | premium workplace | public realm adjacency | market benchmark | other",
+                        "relevance_score": "integer 0-100",
+                        "status": "source_snapshot",
+                        "known_attributes": {
+                            "program_type": "string or null",
+                            "total_sf": "integer or null",
+                            "completion_year": "string or null",
+                            "developer_owner": "string or null",
+                            "architect_designer": "string or null",
+                            "presentation_takeaway": "one sentence or null",
+                            "hero_image": {
+                                "url": "direct image URL ending .jpg, .jpeg, .png, or .webp if available, otherwise null",
+                                "caption": "short image caption or null",
+                                "credit": "image/site credit or null",
+                                "source_url": "page URL where image was found or null",
+                                "image_confidence": "high | medium | low | not_available",
+                                "fallback_urls": ["array of alternative image URLs if found"],
+                            },
+                            "image_package": {
+                                "overall": {"url": "direct image URL or null", "source_url": "page URL or null", "caption": "short caption or null", "confidence": "high | medium | low | not_available"},
+                                "focus": {"url": "direct image URL or null", "source_url": "page URL or null", "caption": "short caption or null", "confidence": "high | medium | low | not_available"},
+                                "detail": {"url": "direct image URL or null", "source_url": "page URL or null", "caption": "short caption or null", "confidence": "high | medium | low | not_available"},
+                            },
+                            "image_candidates": [
+                                {
+                                    "url": "direct image URL",
+                                    "role": "overall | focus | detail | alternate",
+                                    "source_url": "page URL or null",
+                                    "caption": "short caption or null",
+                                    "credit": "image/site credit or null",
+                                    "confidence": "high | medium | low",
+                                    "why_candidate": "brief reason this image may fit the role",
+                                }
+                            ],
+                        },
+                        "missing_attributes": ["strings"],
+                        "source_notes": ["short sourced notes"],
+                        "sources": [
+                            {"name": "string", "type": "string", "url": "https URL", "notes": "one best initial source supporting candidate selection"}
+                        ],
+                    }
+                ],
+                "warnings": ["strings"],
+            },
+        }
+        return [
+            {"role": "developer", "content": system},
+            {"role": "user", "content": json.dumps(user, indent=2)},
+        ]
+
+    def _build_dedupe_input(self, near_misses: list[dict[str, Any]]) -> list[dict[str, str]]:
+        system = (
+            "You are a real estate data deduplication assistant. "
+            "Given pairs of candidate projects, decide whether each pair refers to the SAME physical project (same building, same site). "
+            "Aliases and renamings count as the same project (e.g., '200 Vesey Street' and 'Brookfield Place North Tower' are the same building). "
+            "Two different addresses or distinctly different buildings are NOT the same project. "
+            "When unsure, prefer same_project=false. "
+            "Return only JSON. Do not include markdown."
+        )
+        user = {
+            "pairs": near_misses,
+            "task": (
+                "For each pair, return a decision. If same_project=true, set canonical_choice to either 'left' or 'right' "
+                "indicating which name should be used as canonical. If same_project=false, canonical_choice may be null."
+            ),
+            "required_json_shape": {
+                "decisions": [
+                    {
+                        "pair_id": "string echoing input pair_id",
+                        "same_project": "boolean",
+                        "canonical_choice": "left | right | null",
+                    }
+                ],
+                "warnings": ["strings"],
+            },
+        }
+        return [
+            {"role": "developer", "content": system},
+            {"role": "user", "content": json.dumps(user, indent=2)},
+        ]
+
     def _attempt_search(self, brief: ProjectBrief, max_candidates: int, retry_count: int, use_simpler_query: bool) -> LiveSearchResult:
         """Attempt a single search with optional simpler query for retries."""
         start_time = time.time()
@@ -459,7 +857,7 @@ class OpenAIWebSearchProvider:
                 "Preserve uncertainty instead of guessing."
             ),
             "adaptive_field_guidance": {
-                "instruction": "Populate 3-5 concise client-facing adaptive fields that are responsive to the study intent. Use labels from suggested_labels when they fit; otherwise use similarly concise labels.",
+                "instruction": "Populate 3-5 concise client-facing adaptive fields that are responsive to the study intent. Use labels from suggested_labels when they fit; otherwise use similarly concise labels. Each value must be at most 80 characters (roughly 12 words) so it fits a two-line slide field; do not exceed this even when more detail is available.",
                 "suggested_labels": _suggested_adaptive_labels(brief, candidate),
             },
             "required_json_shape": {
@@ -598,7 +996,7 @@ class OpenAIWebSearchProvider:
             "current_comp": current_comp,
             "missing_or_weak_fields": missing_fields,
             "adaptive_field_guidance": {
-                "instruction": "If adaptive_fields are missing or weak, fill the requested adaptive labels with concise, client-facing values tied to study intent and not redundant with universal facts.",
+                "instruction": "If adaptive_fields are missing or weak, fill the requested adaptive labels with concise, client-facing values tied to study intent and not redundant with universal facts. Each value must be at most 80 characters (roughly 12 words) so it fits a two-line slide field; do not exceed this even when more detail is available.",
                 "suggested_labels": current_comp.get("adaptive_field_labels") or current_comp.get("known_attributes", {}).get("adaptive_field_labels") or [],
             },
             "required_json_shape": {

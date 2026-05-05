@@ -27,6 +27,7 @@ class ProjectBrief:
     audience: str = "concept presentation"
     filters: dict[str, Any] = field(default_factory=dict)
     presentation_priorities: list[str] = field(default_factory=list)
+    comps_per_scope: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectBrief":
@@ -54,7 +55,26 @@ class ProjectBrief:
             audience=str(payload.get("audience", "concept presentation")),
             filters=dict(payload.get("filters") or {}),
             presentation_priorities=[str(item) for item in priorities],
+            comps_per_scope=_normalize_comps_per_scope(payload.get("comps_per_scope")),
         )
+
+
+_VALID_SCOPES = ("local", "national", "international")
+
+
+def _normalize_comps_per_scope(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, int] = {}
+    for scope in _VALID_SCOPES:
+        raw = value.get(scope)
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            normalized[scope] = count
+    return normalized
 
 
 def _comparative_project_inputs(payload: dict[str, Any]) -> dict[str, Any]:

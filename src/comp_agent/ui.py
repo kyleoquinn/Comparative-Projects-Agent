@@ -187,6 +187,7 @@ def _run_discover(payload: dict[str, Any], default_output_root: str, update: Job
         paths["candidate_comps_csv"] = _write_candidate_csv(paths["candidate_comps_csv"], candidates)
     progress("Capturing source log", 94)
     source_log = _read_json_file(paths["source_log"])
+    live_search_status = _live_search_status_from_log(source_log)
     progress("Candidate search complete", 100)
     return {
         "brief": to_jsonable(brief),
@@ -194,6 +195,7 @@ def _run_discover(payload: dict[str, Any], default_output_root: str, update: Job
         "paths": {key: str(value) for key, value in paths.items()},
         "candidates": candidates,
         "source_log": source_log,
+        "live_search_status": live_search_status,
     }
 
 
@@ -309,6 +311,8 @@ def _complete_job(job_id: str, result: dict[str, Any]) -> None:
 
 def _fail_job(job_id: str, error: Exception) -> None:
     now = time.time()
+    raw_error = f"{error}\n{traceback.format_exc()}"
+    friendly = _classify_error(f"{type(error).__name__}: {error}\n{raw_error}")
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if not job:
@@ -316,10 +320,11 @@ def _fail_job(job_id: str, error: Exception) -> None:
         job.update(
             {
                 "status": "failed",
-                "message": "Failed",
+                "message": friendly["headline"],
                 "updated_at": now,
                 "elapsed_seconds": round(now - float(job["created_at"]), 1),
-                "error": f"{error}\n{traceback.format_exc()}",
+                "error": raw_error,
+                "friendly_error": friendly,
             }
         )
 
@@ -566,6 +571,124 @@ def _read_json_file(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _classify_error(text: str) -> dict[str, str]:
+    """Map any error/warning string to a user-friendly headline + detail.
+
+    Used for both fatal job failures and non-fatal live-search warnings so
+    the UI can show a manager-readable message instead of raw OpenAI JSON or
+    Python tracebacks.
+    """
+    t = (text or "").lower()
+
+    # OpenAI / live search
+    if "insufficient_quota" in t or "exceeded your current quota" in t:
+        return {
+            "headline": "Live Search Failed: Out of API Credits",
+            "detail": "The OpenAI account has no remaining credit. Add credits in the OpenAI billing portal and try again.",
+        }
+    if "http 429" in t or "rate limit" in t or "rate-limit" in t:
+        return {
+            "headline": "Live Search Failed: Rate Limit Hit",
+            "detail": "Too many requests to OpenAI in a short window. Wait a minute and try again.",
+        }
+    if "http 401" in t or "invalid_api_key" in t or "incorrect api key" in t:
+        return {
+            "headline": "Live Search Failed: API Key Rejected",
+            "detail": "The OpenAI API key is missing, invalid, or revoked. Update the key in the .env file.",
+        }
+    if "http 403" in t:
+        return {
+            "headline": "Live Search Failed: Access Denied",
+            "detail": "The OpenAI account does not have access to the requested model or feature.",
+        }
+    if "http 5" in t or "service unavailable" in t or "bad gateway" in t or "gateway timeout" in t:
+        return {
+            "headline": "Live Search Failed: OpenAI Service Unavailable",
+            "detail": "OpenAI is having trouble responding. Try again in a few minutes.",
+        }
+    if "timed out" in t or "timeout" in t:
+        return {
+            "headline": "Live Search Failed: Timed Out",
+            "detail": "Live search took too long to respond. Try fewer comps or simpler comp guidance, or run again.",
+        }
+    if "openai_api_key is not set" in t or ("api key" in t and "not set" in t):
+        return {
+            "headline": "Live Search Disabled: API Key Missing",
+            "detail": "OPENAI_API_KEY is not configured. Set it in the .env file to enable live web search.",
+        }
+
+    # Network
+    if (
+        "connectionerror" in t
+        or "connection refused" in t
+        or "connection reset" in t
+        or "name or service not known" in t
+        or "name resolution" in t
+        or "nodename nor servname" in t
+        or "getaddrinfo failed" in t
+    ):
+        return {
+            "headline": "Network Error",
+            "detail": "Could not reach the network. Check your internet connection and try again.",
+        }
+
+    # Filesystem
+    if "permissionerror" in t or "permission denied" in t:
+        return {
+            "headline": "File Permission Denied",
+            "detail": "The agent could not read or write a file. Check permissions on the output folder.",
+        }
+    if "filenotfounderror" in t or "no such file" in t:
+        return {
+            "headline": "File Not Found",
+            "detail": "An expected input or template file is missing. The output folder may be misconfigured.",
+        }
+    if "no space left" in t or "disk full" in t:
+        return {
+            "headline": "Disk Full",
+            "detail": "The output drive is out of space. Free up space and try again.",
+        }
+
+    # Image / asset
+    if "image" in t and ("download" in t or "fetch" in t or "404" in t or "could not retrieve" in t):
+        return {
+            "headline": "Image Download Failed",
+            "detail": "One or more comp images could not be retrieved. The deck may have placeholder slots; re-run to retry.",
+        }
+
+    # Parse
+    if "unparseable" in t or "could not parse" in t or "jsondecodeerror" in t or ("json" in t and "decode" in t):
+        return {
+            "headline": "Live Search Returned Bad Data",
+            "detail": "OpenAI returned a response that was not valid JSON. Try again or simplify the brief.",
+        }
+
+    # Default
+    snippet = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    return {
+        "headline": "Something Went Wrong",
+        "detail": snippet[:240] or "An unexpected error occurred. Check the source log for details.",
+    }
+
+
+def _live_search_status_from_log(source_log: list[dict[str, Any]] | None) -> dict[str, str] | None:
+    """Read the source log for failed live-search entries and classify them."""
+    failed_notes: list[str] = []
+    for entry in source_log or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("related_output") or "") != "openai_live_search":
+            continue
+        if str(entry.get("status") or "").lower() != "failed":
+            continue
+        note = str(entry.get("notes") or "").strip()
+        if note:
+            failed_notes.append(note)
+    if not failed_notes:
+        return None
+    return _classify_error("\n".join(failed_notes))
+
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -759,6 +882,36 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.5;
     }
     code { background: #ece8df; padding: 2px 5px; border-radius: 4px; }
+    .banner {
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 0 0 18px;
+      border-left: 4px solid var(--warn);
+      background: #fdf3ea;
+    }
+    .banner h3 { margin: 0 0 4px; font-size: 15px; color: var(--warn); }
+    .banner p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
+    .scope-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--field);
+    }
+    .scope-row {
+      display: grid;
+      grid-template-columns: 130px 90px 1fr;
+      align-items: center;
+      gap: 10px;
+    }
+    .scope-row .check { margin: 0; font-size: 13px; color: var(--ink); }
+    .scope-count { width: 100%; }
+    .scope-extra { font-size: 12px; color: var(--muted); }
+    .scope-radius { width: 56px; display: inline-block; padding: 4px 6px; }
+    .scope-total { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .scope-total.over { color: var(--warn); font-weight: 700; }
     @media (max-width: 840px) {
       main { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -780,16 +933,6 @@ INDEX_HTML = r"""<!doctype html>
         <input id="program_type" placeholder="e.g., office repositioning">
         <label>Scope summary</label>
         <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
-        <div class="row">
-          <div>
-            <label>Geography</label>
-            <input id="geography" placeholder="e.g., New York City">
-          </div>
-          <div>
-            <label>Number of comps</label>
-            <input id="max_comps" type="number" min="1" max="50" placeholder="e.g., 10">
-          </div>
-        </div>
         <label>Design priorities</label>
         <div id="design_priorities_container">
           <input type="text" id="design_priorities_0" placeholder="Design priority (e.g., arrival experience)" class="design-priority-input">
@@ -804,21 +947,33 @@ INDEX_HTML = r"""<!doctype html>
         <div id="comp_types_container">
           <input type="text" id="comp_types_0" placeholder="Comp type (e.g., office lobby repositioning)" class="comp-type-input">
         </div>
+        <label>Comp scopes &amp; counts</label>
+        <p class="hint">Pick how many comps to pull from each geographic scope. Leave blank to skip a scope. Total is capped at 50.</p>
+        <div class="scope-grid">
+          <div class="scope-row">
+            <label class="check"><input id="scope_local_enabled" type="checkbox"> Local</label>
+            <input id="scope_local_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+            <span class="scope-extra">within <input id="radius_miles" type="number" min="0" step="0.5" placeholder="3" class="scope-radius"> mi</span>
+          </div>
+          <div class="scope-row">
+            <label class="check"><input id="scope_national_enabled" type="checkbox"> National</label>
+            <input id="scope_national_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+            <span class="scope-extra">same country, outside local market</span>
+          </div>
+          <div class="scope-row">
+            <label class="check"><input id="scope_international_enabled" type="checkbox"> International</label>
+            <input id="scope_international_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+            <span class="scope-extra">marquee global precedents</span>
+          </div>
+          <div class="scope-total">Total: <span id="scope_total">0</span> / 50</div>
+        </div>
         <label>Must-use comps</label>
         <div id="must_include_comps_container">
           <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
         </div>
       </div>
-      <div class="row">
-        <div>
-          <label>Radius miles</label>
-          <input id="radius_miles" type="number" min="0" step="0.5" placeholder="e.g., 3">
-        </div>
-        <div>
-          <label>Time horizon</label>
-          <input id="time_horizon_years" type="number" min="1" placeholder="e.g., 8">
-        </div>
-      </div>
+      <label>Time horizon (years)</label>
+      <input id="time_horizon_years" type="number" min="1" placeholder="e.g., 8">
       <label>Search modes</label>
       <div class="checks">
         <label class="check"><input id="live_search" type="checkbox" checked> OpenAI live web</label>
@@ -869,18 +1024,42 @@ INDEX_HTML = r"""<!doctype html>
         .filter(value => value !== '');
     }
     
+    const SCOPE_KEYS = ['local', 'national', 'international'];
+    const SCOPE_TOTAL_CAP = 50;
+    function readScopeCounts() {
+      const out = {};
+      for (const scope of SCOPE_KEYS) {
+        const enabled = checked(`scope_${scope}_enabled`);
+        const raw = value(`scope_${scope}_count`).trim();
+        const count = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)));
+        if (enabled && count > 0) out[scope] = count;
+      }
+      return out;
+    }
+    function scopeTotal(scopeCounts) {
+      return Object.values(scopeCounts).reduce((sum, n) => sum + n, 0);
+    }
+    function deriveGeography(address) {
+      const parts = String(address || '').split(',').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) return parts.slice(1).join(', ');
+      return parts[0] || '';
+    }
     function payload() {
       const compTypes = getDynamicInputValues('comp-type-input');
       const designPriorities = getDynamicInputValues('design-priority-input');
       const mustIncludeComps = parseCompRows('must-include-comp-input');
+      const compsPerScope = readScopeCounts();
+      const total = scopeTotal(compsPerScope);
+      const address = value('address');
       return {
         project_name: value('project_name'),
-        address: value('address'),
+        address: address,
         program_type: value('program_type'),
         scope_summary: value('scope_summary'),
-        geography: value('geography'),
+        geography: deriveGeography(address),
         design_priorities: designPriorities,
-        max_comps: Number(value('max_comps') || 10),
+        max_comps: total || undefined,
+        comps_per_scope: compsPerScope,
         comp_types: compTypes.join(', '),
         amenity_priorities: designPriorities.join(', '),
         radius_miles: Number(value('radius_miles') || 3),
@@ -942,17 +1121,60 @@ INDEX_HTML = r"""<!doctype html>
     
     function setBusy(isBusy, text, actionText = 'Searching...') {
       const discoverBtn = document.getElementById('discover');
-      
-      document.getElementById('discover').disabled = isBusy;
+
+      const total = scopeTotal(readScopeCounts());
+      discoverBtn.disabled = isBusy || total <= 0;
       approveBtn.disabled = isBusy || !lastCandidates.length;
       statusEl.textContent = text;
-      
+
       if (isBusy) {
         discoverBtn.innerHTML = `<div class="button-loading"><div class="loading"></div>${escapeHtml(actionText)}</div>`;
         discoverBtn.classList.add('button-loading');
       } else {
         discoverBtn.innerHTML = 'Search comps';
         discoverBtn.classList.remove('button-loading');
+      }
+    }
+    function refreshScopeTotal() {
+      const counts = readScopeCounts();
+      const total = scopeTotal(counts);
+      const totalEl = document.getElementById('scope_total');
+      const wrapper = totalEl ? totalEl.parentElement : null;
+      if (totalEl) totalEl.textContent = String(total);
+      if (wrapper) wrapper.classList.toggle('over', total > SCOPE_TOTAL_CAP);
+      const discoverBtn = document.getElementById('discover');
+      const isBusy = discoverBtn.classList.contains('button-loading');
+      if (!isBusy) {
+        discoverBtn.disabled = total <= 0 || total > SCOPE_TOTAL_CAP;
+        if (total <= 0) {
+          statusEl.textContent = 'Enter a count for at least one scope to enable search.';
+        } else if (total > SCOPE_TOTAL_CAP) {
+          statusEl.textContent = `Total ${total} exceeds the ${SCOPE_TOTAL_CAP}-comp cap. Reduce one or more counts.`;
+        } else if (statusEl.textContent.startsWith('Enter a count') || statusEl.textContent.startsWith('Total ')) {
+          statusEl.textContent = 'Ready.';
+        }
+      }
+    }
+    function bindScopeInputs() {
+      for (const scope of SCOPE_KEYS) {
+        const checkbox = document.getElementById(`scope_${scope}_enabled`);
+        const countInput = document.getElementById(`scope_${scope}_count`);
+        countInput.addEventListener('input', () => {
+          if (countInput.value.trim() !== '' && Number(countInput.value) > 0) {
+            checkbox.checked = true;
+          } else if (countInput.value.trim() === '') {
+            checkbox.checked = false;
+          }
+          refreshScopeTotal();
+        });
+        checkbox.addEventListener('change', () => {
+          if (!checkbox.checked) {
+            countInput.value = '';
+          } else if (countInput.value.trim() === '') {
+            countInput.focus();
+          }
+          refreshScopeTotal();
+        });
       }
     }
     async function post(url, data) {
@@ -970,20 +1192,23 @@ INDEX_HTML = r"""<!doctype html>
         statusEl.textContent = 'No output folder selected.';
       }
     }
+    function bannerHtml(status) {
+      if (!status || !status.headline) return '';
+      return `<div class="banner"><h3>${escapeHtml(status.headline)}</h3><p>${escapeHtml(status.detail || '')}</p></div>`;
+    }
     function renderResults(data) {
       lastPayload = data.brief;
       lastPayload.output_root = data.output_root;
       lastPayload.live_search = checked('live_search');
       lastCandidates = data.candidates || [];
       approveBtn.disabled = !lastCandidates.length;
+      const banner = bannerHtml(data.live_search_status);
       if (!lastCandidates.length) {
-        resultsEl.className = 'empty';
-        const log = (data.source_log || []).map(s => `${s.status}: ${s.notes || s.source_name}`).join('\n');
-        const isTimeout = log.toLowerCase().includes('timed out');
-        const errorMsg = isTimeout 
-          ? 'Live search timed out. Try a lighter search, fewer comps, or add comps manually.'
-          : 'No candidate comps returned.';
-        resultsEl.textContent = `${errorMsg}\n\n${log || 'Check source log and search settings.'}`;
+        resultsEl.className = '';
+        const fallback = banner
+          ? ''
+          : '<div class="banner"><h3>No Candidates Returned</h3><p>The search completed but no comps were produced. Try widening the brief or adding must-use comps.</p></div>';
+        resultsEl.innerHTML = banner + fallback;
         return;
       }
       resultsEl.className = '';
@@ -1005,7 +1230,7 @@ INDEX_HTML = r"""<!doctype html>
         </article>`;
       }).join('');
       const sources = (data.source_log || []).slice(0, 12).map(s => `<div class="source">${escapeHtml(s.source_name)} · <a href="${s.url_or_search}" target="_blank">${escapeHtml(s.source_type)}</a></div>`).join('');
-      resultsEl.innerHTML = `<h2>Candidate comps</h2>${candidates}<div class="sources"><h2>Sources</h2>${sources || '<div class="source">No source URLs captured.</div>'}</div>`;
+      resultsEl.innerHTML = `${banner}<h2>Candidate comps</h2>${candidates}<div class="sources"><h2>Sources</h2>${sources || '<div class="source">No source URLs captured.</div>'}</div>`;
     }
     function escapeHtml(text) {
       return String(text || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
@@ -1040,7 +1265,11 @@ INDEX_HTML = r"""<!doctype html>
         showProgress(title, job);
         statusEl.textContent = `${job.message || 'Working...'} · ${Number(job.elapsed_seconds || 0).toFixed(1)}s`;
         if (job.status === 'complete') return job.result;
-        if (job.status === 'failed') throw new Error(job.error || 'Job failed.');
+        if (job.status === 'failed') {
+          const failure = new Error(job.error || 'Job failed.');
+          failure.friendly = job.friendly_error || null;
+          throw failure;
+        }
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
@@ -1048,6 +1277,8 @@ INDEX_HTML = r"""<!doctype html>
     setupMustIncludeCompsInputs();
     setupCompTypesInputs();
     setupDesignPrioritiesInputs();
+    bindScopeInputs();
+    refreshScopeTotal();
     document.getElementById('browse_output').addEventListener('click', async () => {
       try {
         await selectOutputFolder();
@@ -1057,15 +1288,26 @@ INDEX_HTML = r"""<!doctype html>
     });
     
     document.getElementById('discover').addEventListener('click', async () => {
+      const compsPerScope = readScopeCounts();
+      const total = scopeTotal(compsPerScope);
+      if (total <= 0) {
+        statusEl.textContent = 'Enter a count for at least one scope to enable search.';
+        return;
+      }
+      if (total > SCOPE_TOTAL_CAP) {
+        statusEl.textContent = `Total ${total} exceeds the ${SCOPE_TOTAL_CAP}-comp cap. Reduce one or more counts.`;
+        return;
+      }
       setBusy(true, 'Starting search...', 'Searching...');
       try {
         const data = await runJob('/api/discover/start', payload(), 'Searching Comps');
         renderResults(data);
         setBusy(false, `Found ${lastCandidates.length} candidates. Select comps to approve.`);
       } catch (err) {
-        setBusy(false, 'Search failed.');
-        resultsEl.className = 'empty';
-        resultsEl.textContent = err.message;
+        const friendly = err.friendly || { headline: 'Search Failed', detail: (err.message || '').split('\n')[0].slice(0, 240) };
+        setBusy(false, friendly.headline);
+        resultsEl.className = '';
+        resultsEl.innerHTML = bannerHtml(friendly);
       }
     });
     approveBtn.addEventListener('click', async () => {
@@ -1107,10 +1349,11 @@ INDEX_HTML = r"""<!doctype html>
         </div>`;
         resultsEl.insertAdjacentHTML('afterbegin', outputHtml);
       } catch (err) {
-        setBusy(false, 'Approval failed.');
+        const friendly = err.friendly || { headline: 'Deck Generation Failed', detail: (err.message || '').split('\n')[0].slice(0, 240) };
+        setBusy(false, friendly.headline);
         approveBtn.innerHTML = originalText;
         approveBtn.classList.remove('button-loading');
-        resultsEl.insertAdjacentHTML('afterbegin', `<p class="meta">${escapeHtml(err.message)}</p>`);
+        resultsEl.insertAdjacentHTML('afterbegin', bannerHtml(friendly));
       }
     });
   </script>

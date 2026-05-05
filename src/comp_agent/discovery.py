@@ -63,6 +63,7 @@ def discover_with_target(
     target_count: int,
     *,
     concurrency: int | None = None,
+    comps_per_scope: dict[str, int] | None = None,
 ) -> DiscoveryResult:
     """Run the full wide-funnel discovery pipeline.
 
@@ -74,14 +75,32 @@ def discover_with_target(
     4. Top-up (one round only): if still short, run a small fan-out with
        the existing comp set as exclusion list.
     5. Truncate to ``target_count`` and surface warnings on underdelivery.
-    """
-    target = _bounded_target(target_count)
-    concurrency = _bounded_concurrency(concurrency)
-    logger.info(f"Starting discovery for {brief.project_name}, target={target}, concurrency={concurrency}")
 
-    plan = provider.plan_axes(brief, target)
-    axes = plan.get("axes") or []
-    warnings: list[str] = list(plan.get("warnings") or [])
+    When ``comps_per_scope`` is provided (e.g. ``{"local": 5, "national": 3}``),
+    the planner is invoked once per scope so each axis carries an explicit
+    geographic guardrail and the requested per-scope counts are honored.
+    """
+    scope_targets = _normalize_scope_targets(comps_per_scope or brief.comps_per_scope)
+    target = sum(scope_targets.values()) if scope_targets else _bounded_target(target_count)
+    concurrency = _bounded_concurrency(concurrency)
+    logger.info(
+        f"Starting discovery for {brief.project_name}, target={target}, "
+        f"scopes={scope_targets or 'none'}, concurrency={concurrency}"
+    )
+
+    warnings: list[str] = []
+    if scope_targets:
+        axes: list[dict[str, Any]] = []
+        for scope, scope_target in scope_targets.items():
+            scope_plan = provider.plan_axes(brief, scope_target, scope=scope)
+            warnings.extend(scope_plan.get("warnings") or [])
+            for axis in scope_plan.get("axes") or []:
+                axes.append({**axis, "scope": scope})
+    else:
+        plan = provider.plan_axes(brief, target)
+        axes = list(plan.get("axes") or [])
+        warnings.extend(plan.get("warnings") or [])
+
     if not axes:
         return DiscoveryResult(
             warnings=[*warnings, "Planner returned no axes; discovery aborted."],
@@ -452,6 +471,40 @@ def _scale_axes_for_topup(axes: list[dict[str, Any]], gap: int) -> list[dict[str
         {**axis, "target_count": per_axis}
         for axis in selected
     ]
+
+
+def _normalize_scope_targets(value: Any) -> dict[str, int]:
+    """Coerce ``comps_per_scope`` input into an ordered ``{scope: count}`` dict.
+
+    Drops scopes with zero/missing counts and clamps the total against
+    ``MAX_TARGET_COUNT``. Order is local -> national -> international so
+    fan-out reads naturally in logs.
+    """
+    if not isinstance(value, dict):
+        return {}
+    valid_order = ("local", "national", "international")
+    normalized: dict[str, int] = {}
+    for scope in valid_order:
+        raw = value.get(scope)
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            normalized[scope] = count
+    if not normalized:
+        return {}
+    total = sum(normalized.values())
+    if total > MAX_TARGET_COUNT:
+        scale = MAX_TARGET_COUNT / total
+        scaled = {scope: max(1, int(count * scale)) for scope, count in normalized.items()}
+        # Adjust any rounding drift to land exactly on the cap.
+        drift = MAX_TARGET_COUNT - sum(scaled.values())
+        if drift:
+            first_scope = next(iter(scaled))
+            scaled[first_scope] = max(1, scaled[first_scope] + drift)
+        normalized = scaled
+    return normalized
 
 
 def _bounded_target(target_count: int) -> int:

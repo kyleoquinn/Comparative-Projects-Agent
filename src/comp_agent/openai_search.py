@@ -246,7 +246,7 @@ class OpenAIWebSearchProvider:
             }
         return parsed
 
-    def plan_axes(self, brief: ProjectBrief, target_count: int) -> dict[str, Any]:
+    def plan_axes(self, brief: ProjectBrief, target_count: int, *, scope: str | None = None) -> dict[str, Any]:
         """Generate diverse search axes for fan-out discovery.
 
         Returns a dict with keys: ``axes`` (list of axis dicts) and ``warnings``.
@@ -254,12 +254,15 @@ class OpenAIWebSearchProvider:
         into the discovery prompt), ``target_count`` (per-axis comp count).
         Falls back to a single generic axis if the planner call fails or is
         unavailable so the orchestrator can still fan out.
+
+        ``scope`` is one of ``local``, ``national``, ``international`` and
+        constrains every returned axis to the requested geography.
         """
         if not self.api_key:
             return {
                 "axes": [
                     {
-                        "label": "general comparable projects",
+                        "label": _scope_label_prefix(scope) + "general comparable projects",
                         "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
                         "target_count": target_count,
                     }
@@ -269,7 +272,7 @@ class OpenAIWebSearchProvider:
         payload = {
             "model": self.model,
             "reasoning": {"effort": "low"},
-            "input": self._build_planner_input(brief, target_count),
+            "input": self._build_planner_input(brief, target_count, scope=scope),
         }
         try:
             response = self._post_json(payload)
@@ -278,7 +281,7 @@ class OpenAIWebSearchProvider:
             return {
                 "axes": [
                     {
-                        "label": "general comparable projects",
+                        "label": _scope_label_prefix(scope) + "general comparable projects",
                         "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
                         "target_count": target_count,
                     }
@@ -291,7 +294,7 @@ class OpenAIWebSearchProvider:
             return {
                 "axes": [
                     {
-                        "label": "general comparable projects",
+                        "label": _scope_label_prefix(scope) + "general comparable projects",
                         "prompt_fragment": "Find comparable projects across all relevant intervention types and scales for this brief.",
                         "target_count": target_count,
                     }
@@ -444,14 +447,18 @@ class OpenAIWebSearchProvider:
             }
         return {"decisions": parsed["decisions"], "warnings": [str(w) for w in parsed.get("warnings", []) if w]}
 
-    def _build_planner_input(self, brief: ProjectBrief, target_count: int) -> list[dict[str, str]]:
-        axis_count = max(2, min(10, (target_count + 4) // 5))
-        per_axis = max(3, (target_count + axis_count - 1) // axis_count)
+    def _build_planner_input(self, brief: ProjectBrief, target_count: int, *, scope: str | None = None) -> list[dict[str, str]]:
+        # For small scope targets (1-3) prefer one axis so the planner does
+        # not over-fragment; large targets fan out to ~5 axes max.
+        axis_count = max(1, min(5, (target_count + 2) // 3))
+        per_axis = max(1, (target_count + axis_count - 1) // axis_count)
+        scope_directive = _scope_planner_directive(scope, brief)
         system = (
             "You are a real estate research strategist. "
             "Given a project brief, propose distinct search axes for finding diverse comparable projects. "
-            "Each axis should encode a meaningfully different angle (intervention type, scale, geography sub-region, era, programmatic emphasis, market positioning). "
+            "Each axis should encode a meaningfully different angle (intervention type, scale, sub-region within scope, era, programmatic emphasis, market positioning). "
             "Avoid overlap between axes; emphasize diversity. "
+            f"{scope_directive} "
             "Return only JSON. Do not include markdown."
         )
         user = {
@@ -469,10 +476,12 @@ class OpenAIWebSearchProvider:
                 "filters": brief.filters,
             },
             "target_total_comps": target_count,
+            "geographic_scope": _scope_planner_payload(scope, brief),
             "task": (
                 f"Propose exactly {axis_count} diverse search axes that together can surface {target_count} distinct comparable projects. "
                 "Each axis must describe a real angle for searching (not a generic phrase). "
                 f"Allocate target_count per axis so the sum reaches {target_count}; ~{per_axis} per axis is a reasonable starting point. "
+                "Each prompt_fragment must respect the geographic_scope and tell the downstream search to stay inside it. "
                 "Each prompt_fragment should be 1-2 sentences that can be injected into a downstream live web-search prompt."
             ),
             "required_json_shape": {
@@ -503,20 +512,24 @@ class OpenAIWebSearchProvider:
         axis_label = str(axis.get("label") or "axis")
         axis_fragment = str(axis.get("prompt_fragment") or "")
         axis_target = max(1, int(axis.get("target_count") or 5))
+        axis_scope = str(axis.get("scope") or "").strip().lower() or None
+        scope_directive = _scope_axis_directive(axis_scope, brief)
         if use_simpler_query:
             system = (
                 "You are a real estate research assistant. "
                 "Use live web search to find comparable projects. "
                 f"Search axis: {axis_label}. {axis_fragment} "
+                f"{scope_directive} "
                 "Focus on basic project facts: name, location, comp_type, and one source URL. "
                 "Skip detailed image searches and extensive attributes. "
                 "Return only JSON. Do not include markdown. Do not invent facts; use null for unknown fields."
             )
-            task = f"Find up to {axis_target} comparable projects matching this axis for {brief.program_type} in {brief.geography}."
+            task = f"Find up to {axis_target} comparable projects matching this axis for {brief.program_type}, respecting the geographic scope above."
         else:
             system = (
                 "You are a real estate research assistant for concept-stage client presentation decks. "
                 f"Search axis: {axis_label}. {axis_fragment} "
+                f"{scope_directive} "
                 "Use live web search and prefer official owner/developer, architect, broker, planning, and reputable market sources. "
                 "If the user provides excluded_user_defined_comps or must_not_include, do not return those projects as discovered candidates. "
                 "For initial candidate discovery, include one best source per candidate; deeper source backup happens after approval. "
@@ -555,7 +568,9 @@ class OpenAIWebSearchProvider:
             "search_axis": {
                 "label": axis_label,
                 "prompt_fragment": axis_fragment,
+                "scope": axis_scope,
             },
+            "geographic_scope": _scope_planner_payload(axis_scope, brief),
             "must_not_include": exclude,
             "task": task,
             "required_json_shape": {
@@ -1278,6 +1293,96 @@ def _suggested_adaptive_labels(brief: ProjectBrief, candidate: CompCandidate) ->
     if any(token in text for token in ("adaptive reuse", "conversion", "reuse")):
         return ["Original Use", "New Use", "Preservation / Structure Move", "Program Transformation", "Sustainability Claim"]
     return ["Program Strategy", "Public Interface", "User Experience", "Design Strategy", "Market Positioning"]
+
+
+def _scope_label_prefix(scope: str | None) -> str:
+    if not scope:
+        return ""
+    return f"[{scope}] "
+
+
+def _scope_planner_directive(scope: str | None, brief: ProjectBrief) -> str:
+    if not scope:
+        return ""
+    if scope == "local":
+        radius = _format_radius(brief.radius_miles)
+        return (
+            f"Every axis you propose must constrain its search to the local market: within {radius} of "
+            f"{brief.address or brief.geography} (same metro / submarket). Do not propose axes that drift to other regions."
+        )
+    if scope == "national":
+        return (
+            f"Every axis you propose must constrain its search to the same country as {brief.address or brief.geography}, "
+            "but outside the immediate local market. Reach for projects in other major cities of that country."
+        )
+    if scope == "international":
+        return (
+            "Every axis you propose must constrain its search to projects outside the project's home country. "
+            "Reach for marquee international precedents."
+        )
+    return ""
+
+
+def _scope_axis_directive(scope: str | None, brief: ProjectBrief) -> str:
+    if not scope:
+        return ""
+    if scope == "local":
+        radius = _format_radius(brief.radius_miles)
+        return (
+            f"GEOGRAPHIC CONSTRAINT (HARD): Every returned candidate must be located within {radius} of "
+            f"{brief.address or brief.geography}, or in the same metro / submarket. "
+            "Reject any candidate that is not local; do not pad with out-of-area projects."
+        )
+    if scope == "national":
+        return (
+            f"GEOGRAPHIC CONSTRAINT (HARD): Every returned candidate must be in the same country as "
+            f"{brief.address or brief.geography}, but outside the immediate local market. "
+            "Prefer other major cities of that country. Do not return international or local-market projects on this axis."
+        )
+    if scope == "international":
+        return (
+            "GEOGRAPHIC CONSTRAINT (HARD): Every returned candidate must be outside the project's home country. "
+            "Marquee global precedents only. Do not return same-country projects on this axis."
+        )
+    return ""
+
+
+def _scope_planner_payload(scope: str | None, brief: ProjectBrief) -> dict[str, Any]:
+    if not scope:
+        return {"mode": "unconstrained"}
+    if scope == "local":
+        return {
+            "mode": "local",
+            "radius_miles": brief.radius_miles,
+            "anchor_address": brief.address or brief.geography,
+            "anchor_metro": brief.geography,
+            "rule": "Every candidate must be within radius_miles of anchor_address, or in the same metro/submarket.",
+        }
+    if scope == "national":
+        return {
+            "mode": "national",
+            "anchor_country_seed": brief.address or brief.geography,
+            "rule": "Every candidate must be in the same country as anchor_country_seed but outside the immediate local market.",
+        }
+    if scope == "international":
+        return {
+            "mode": "international",
+            "anchor_country_seed": brief.address or brief.geography,
+            "rule": "Every candidate must be outside the country of anchor_country_seed.",
+        }
+    return {"mode": scope}
+
+
+def _format_radius(radius_miles: float) -> str:
+    try:
+        miles = float(radius_miles)
+    except (TypeError, ValueError):
+        return "5 miles"
+    if miles <= 0:
+        return "5 miles"
+    if miles == int(miles):
+        return f"{int(miles)} miles"
+    return f"{miles:g} miles"
 
 
 def _bounded_int(value: Any, *, default: int) -> int:

@@ -210,8 +210,13 @@ class CompResearchAgent:
     def _live_search(self, brief: ProjectBrief):
         if not self.search_provider:
             return None
-        target_count = _max_candidates_for(brief)
-        cache_key = f"{brief.project_name}|{brief.address}|{brief.program_type}|{brief.geography}|{brief.comp_types}|{target_count}"
+        scope_targets = brief.comps_per_scope or {}
+        target_count = sum(scope_targets.values()) if scope_targets else _max_candidates_for(brief)
+        scope_signature = ",".join(f"{k}:{v}" for k, v in sorted(scope_targets.items()))
+        cache_key = (
+            f"{brief.project_name}|{brief.address}|{brief.program_type}|{brief.geography}|"
+            f"{brief.comp_types}|{target_count}|{scope_signature}"
+        )
         if cache_key not in self._live_search_cache:
             # Wide-funnel discovery: planner -> parallel fan-out -> dedupe -> top-up.
             # See ``discovery.discover_with_target`` for the full flow. The
@@ -219,7 +224,10 @@ class CompResearchAgent:
             # ``LiveSearchResult`` for the fields downstream callers read
             # (``candidates``, ``source_log``, ``warnings``).
             self._live_search_cache[cache_key] = discover_with_target(
-                self.search_provider, brief, target_count
+                self.search_provider,
+                brief,
+                target_count,
+                comps_per_scope=scope_targets or None,
             )
         return self._live_search_cache[cache_key]
 

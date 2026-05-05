@@ -225,14 +225,14 @@ def _profile_slide(prs: Presentation, comp: dict[str, Any], index: int) -> None:
     slide = _blank_slide(prs)
     _add_image_triptych(slide, comp, 0.55, 0.65, 7.2, 5.95)
 
-    _add_text(slide, _profile_title_text(comp["project_name"]), 8.05, 0.62, 4.6, 0.78, size=20, bold=True)
+    _add_text(slide, _profile_title_text(comp["project_name"]), 8.05, 0.62, 5.0, 0.78, size=20, bold=True)
     meta = " | ".join(part for part in [comp["location"], comp["status_year"]] if part and part != "—")
-    _add_text(slide, meta, 8.06, 1.48, 4.4, 0.22, size=9, color=MUTED)
-    _tags(slide, _profile_tags(comp), 8.05, 1.82, 4.65)
-    _facts_card(slide, "Universal Facts", _universal_fact_rows(comp), 8.05, 2.16, 4.65, 1.76, row_height=0.19, value_size=6)
-    _facts_card(slide, "Adaptive Facts", list(comp["adaptive_fields"].items())[:5], 8.05, 4.05, 4.65, 1.82, row_height=0.25, value_size=6)
+    _add_text(slide, meta, 8.06, 1.48, 4.8, 0.22, size=9, color=MUTED)
+    _tags(slide, _profile_tags(comp), 8.05, 1.82, 5.05)
+    _facts_card(slide, "Project Profile", _universal_fact_rows(comp), 8.05, 2.16, 5.05, 1.76, row_height=0.19, value_size=6)
+    _facts_card(slide, "Study-Specific Insights", list(comp["adaptive_fields"].items())[:5], 8.05, 4.05, 5.05, 1.82, row_height=0.25, value_size=6, max_value_chars=110)
     _add_section_label(slide, "Relevance to Subject", 8.05, 6.03)
-    _add_text(slide, comp["relevance_to_subject"], 8.05, 6.25, 4.65, 0.42, size=9)
+    _add_text(slide, comp["relevance_to_subject"], 8.05, 6.25, 5.05, 0.42, size=9)
     _add_text(slide, _sources_footer(comp), 0.55, 6.82, 11.85, 0.18, size=5, color=MUTED)
     _content_footer(slide, len(prs.slides))
 
@@ -397,8 +397,8 @@ def _takeaway_trend_table(slide, takeaways: list[dict[str, Any]], x: float, y: f
         row_y = y + header_h + (index - 1) * row_h
         if index > 1:
             _add_rule(slide, x, row_y, w)
-        _add_text(slide, f"{index:02d}", x + 0.18, row_y + 0.1, 0.38, 0.16, size=7, bold=True, color=ACCENT)
-        _add_text(slide, trend, x + 0.7, row_y + 0.08, w - 0.95, row_h - 0.08, size=8, color=INK)
+        _add_text(slide, f"{index:02d}", x + 0.18, row_y, 0.38, row_h, size=7, bold=True, color=ACCENT, valign=MSO_ANCHOR.MIDDLE)
+        _add_text(slide, _truncate_for_display(trend, 180), x + 0.7, row_y, w - 0.95, row_h, size=8, color=INK, valign=MSO_ANCHOR.MIDDLE)
 
 
 def _matrix_legend(slide, x: float, y: float, w: float) -> None:
@@ -681,6 +681,13 @@ def _slide_title(slide, title: str, subtitle: str) -> None:
     _add_rule(slide, 0.55, 1.08, 12.25)
 
 
+def _truncate_for_display(text: Any, max_chars: int) -> str:
+    s = "" if text is None else str(text)
+    if len(s) <= max_chars:
+        return s
+    return s[: max(1, max_chars - 1)].rstrip() + "…"
+
+
 def _facts_card(
     slide,
     title: str,
@@ -692,6 +699,7 @@ def _facts_card(
     *,
     row_height: float = 0.21,
     value_size: int = 7,
+    max_value_chars: int | None = None,
 ) -> None:
     shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
     shape.fill.solid()
@@ -703,8 +711,9 @@ def _facts_card(
     for label, value in rows:
         if row_y + row_height > bottom:
             break
+        display_value = _truncate_for_display(value, max_value_chars) if max_value_chars else value
         _add_text(slide, label, x + 0.18, row_y, 1.25, 0.18, size=5, bold=True, color=MUTED)
-        _add_text(slide, value, x + 1.47, row_y, w - 1.65, row_height, size=value_size)
+        _add_text(slide, display_value, x + 1.47, row_y, w - 1.65, row_height, size=value_size)
         row_y += row_height
 
 
@@ -768,13 +777,12 @@ def _profile_tags(comp: dict[str, Any]) -> list[str]:
 
 def _universal_fact_rows(comp: dict[str, Any]) -> list[tuple[str, str]]:
     return [
-        ("Type", comp["project_type"]),
+        ("Program", comp["project_type"]),
         ("Scale", comp["scale"]["display"]),
         ("Year / Status", comp["status_year"]),
         ("Owner / Developer", comp["owner_developer"]),
         ("Architect / Designer", comp["architect_designer"]),
         ("Intervention", comp["intervention_type"]),
-        ("Key Program", comp["key_program"]),
     ]
 
 

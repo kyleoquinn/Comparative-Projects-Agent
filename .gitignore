@@ -11,3 +11,4 @@ projects_ui/
 projects_*_server*.log
 tmp_*.pptx
 *.log
+.claude/

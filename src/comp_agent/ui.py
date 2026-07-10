@@ -1215,16 +1215,16 @@ INDEX_HTML = r"""<!doctype html>
     </div>
 
     <div class="form-footer">
+      <div class="actions">
+        <button id="discover">Search comps</button>
+        <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>
+      </div>
       <div class="footer-output">
         <label>Output folder</label>
         <div class="path-row">
           <input id="output_root" placeholder="e.g., C:\Comp Outputs" required>
           <button id="browse_output" type="button" class="secondary">Browse</button>
         </div>
-      </div>
-      <div class="actions">
-        <button id="discover">Search comps</button>
-        <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>
       </div>
       <p id="status" class="status">Ready.</p>
     </div>

@@ -15,10 +15,14 @@ dependencies = [
 
 [project.scripts]
 comp-agent = "comp_agent.cli:main"
+comp-agent-app = "comp_agent.app:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+]
+packaging = [
+  "pyinstaller>=6",
 ]
 
 [tool.setuptools.packages.find]

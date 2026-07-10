@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -31,7 +32,24 @@ DARK = RGBColor(0, 0, 0)
 LIGHT_GREEN = RGBColor(115, 201, 45)
 ACCENT_TINT = RGBColor(229, 246, 237)
 MATRIX_DOT_DIAMETER = 0.052
-LOGO_PATH = Path(__file__).with_name("assets") / "pelli_clarke_partners_logo.jpg"
+
+
+def _resource_path(*parts: str) -> Path:
+    """Resolve a bundled asset path, freeze-safe.
+
+    Under a PyInstaller build, ``__file__``-relative lookup breaks; data files
+    are unpacked under ``sys._MEIPASS`` (with this package's assets bundled at
+    ``comp_agent/assets`` — see ``packaging/comp_agent.spec``). From source,
+    behavior is identical to the original ``Path(__file__)``-relative lookup.
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "comp_agent"
+    else:
+        base = Path(__file__).parent
+    return base.joinpath(*parts)
+
+
+LOGO_PATH = _resource_path("assets", "pelli_clarke_partners_logo.jpg")
 
 
 def create_concept_deck(

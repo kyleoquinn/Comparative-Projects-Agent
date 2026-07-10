@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+from comp_agent.config import resolve_config
 from comp_agent.models import ProjectBrief
 from comp_agent.stages import CompAppStages
 from comp_agent.workspace import slugify, to_jsonable, write_csv, write_json
@@ -36,6 +37,12 @@ def _handler_for(default_output_root: str):
             if self.path in {"/", "/index.html"}:
                 self._send_html(INDEX_HTML)
                 return
+            if self.path == "/api/preflight":
+                self._send_json(_preflight_report())
+                return
+            if self.path == "/api/settings":
+                self._send_json({"settings": _load_settings(), "path": str(_settings_path())})
+                return
             if self.path.startswith("/api/jobs/"):
                 self._handle_job_status()
                 return
@@ -50,6 +57,9 @@ def _handler_for(default_output_root: str):
                 return
             if self.path == "/api/select-output-folder":
                 self._handle_select_output_folder()
+                return
+            if self.path == "/api/settings":
+                self._handle_save_settings()
                 return
             if self.path == "/api/discover":
                 self._handle_discover(default_output_root)
@@ -88,6 +98,19 @@ def _handler_for(default_output_root: str):
 
         def _handle_select_output_folder(self) -> None:
             self._send_json({"path": _select_output_folder()})
+
+        def _handle_save_settings(self) -> None:
+            payload = self._read_json()
+            try:
+                saved = _save_settings(payload)
+            except Exception:
+                # Settings persistence is best-effort; a broken profile dir
+                # must never fail the request (or the run that triggered it).
+                self._send_json(
+                    {"ok": False, "settings": _sanitize_settings(payload), "path": str(_settings_path())}
+                )
+                return
+            self._send_json({"ok": True, "settings": saved, "path": str(_settings_path())})
 
         def _read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0"))
@@ -363,6 +386,111 @@ def _select_output_folder() -> str:
         return ""
 
 
+def _default_output_root() -> str:
+    """Per-user default output folder shown when the field would be empty.
+
+    Computed only — never created here. Existing stage code creates output
+    directories when a run actually starts.
+    """
+    return str(Path.home() / "Documents" / "Comp Packages")
+
+
+def _settings_path() -> Path:
+    """Per-user settings file: %LOCALAPPDATA%\\CompAgent\\settings.json.
+
+    Falls back to the home directory when LOCALAPPDATA is unset (non-Windows
+    test environments).
+    """
+    base = (os.environ.get("LOCALAPPDATA") or "").strip()
+    root = Path(base) if base else Path.home()
+    return root / "CompAgent" / "settings.json"
+
+
+def _sanitize_settings(payload: Any) -> dict[str, Any]:
+    """Keep only known, correctly-typed settings keys. Never raises."""
+    settings: dict[str, Any] = {}
+    if not isinstance(payload, dict):
+        return settings
+    output_root = payload.get("output_root")
+    if isinstance(output_root, str) and output_root.strip():
+        settings["output_root"] = output_root.strip()
+    live_search = payload.get("live_search")
+    if isinstance(live_search, bool):
+        settings["live_search"] = live_search
+    return settings
+
+
+def _load_settings() -> dict[str, Any]:
+    """Read saved per-user settings; corrupt or missing files yield {}."""
+    try:
+        raw = _settings_path().read_text(encoding="utf-8")
+        return _sanitize_settings(json.loads(raw))
+    except Exception:
+        return {}
+
+
+def _save_settings(payload: Any) -> dict[str, Any]:
+    """Merge sanitized settings over existing ones and persist to disk."""
+    settings = {**_load_settings(), **_sanitize_settings(payload)}
+    path = _settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    return settings
+
+
+def _key_source_from_report(report: dict[str, Any]) -> str | None:
+    """Best-effort name of the config layer that supplies OPENAI_API_KEY.
+
+    Prefers a layer that set the key during this resolution, then a loaded
+    layer whose file contains the key (the usual case when startup already
+    resolved config before the preflight ran), then plain process env. The
+    env-vs-file distinction is heuristic by design — key VALUES are never
+    inspected or compared.
+    """
+    layers = report.get("layers") or []
+    for entry in layers:
+        if "OPENAI_API_KEY" in (entry.get("keys_set") or []):
+            return str(entry.get("layer") or "") or None
+    for entry in layers:
+        if "OPENAI_API_KEY" in (entry.get("keys_already_in_env") or []):
+            return str(entry.get("layer") or "") or None
+    if report.get("openai_key_present"):
+        return "env"
+    return None
+
+
+def _preflight_report() -> dict[str, Any]:
+    """Secrets-free startup health check for the UI.
+
+    Re-runs layered config resolution (idempotent; env always wins) and maps
+    the two common first-run failures to the existing friendly-error copy.
+    Key VALUES never appear in this payload — the WS-1 report carries key
+    names and source paths only.
+    """
+    report = resolve_config()
+    key_present = bool(report.get("openai_key_present"))
+    share_reachable = report.get("share_reachable")
+    friendly: dict[str, str] | None = None
+    if not key_present:
+        if share_reachable is False:
+            friendly = _classify_error(
+                "Shared key config unreachable: the network share holding the OpenAI key did not respond."
+            )
+        else:
+            friendly = _classify_error(
+                "No OpenAI key found in any config location (environment, config files, shared drive, .env)."
+            )
+    return {
+        "ok": key_present,
+        "openai_key_present": key_present,
+        "key_source": _key_source_from_report(report),
+        "share_reachable": share_reachable,
+        "default_output_root": _default_output_root(),
+        "layers": report.get("layers") or [],
+        "friendly_error": friendly,
+    }
+
+
 def _must_include_comps_for_discovery(brief: ProjectBrief, raw_text: str = "") -> list[dict[str, str]]:
     items = list(brief.must_include_comps)
     items.extend(_parse_user_defined_comps(raw_text))
@@ -589,6 +717,25 @@ def _classify_error(text: str) -> dict[str, str]:
     """
     t = (text or "").lower()
 
+    # Shared key config / preflight. Checked first so share and key-lookup
+    # problems get the office-specific copy instead of the generic
+    # network/timeout messages below. The same classifications cover
+    # job-time failures of the same nature.
+    if "shared key config" in t:
+        return {
+            "headline": "Can't Reach the Shared Key Config",
+            "detail": "Check your VPN/network connection. The OpenAI key lives on the office share and could not be read; reconnect and try again.",
+        }
+    if (
+        "no openai key found" in t
+        or "openai_api_key is not set" in t
+        or ("api key" in t and "not set" in t)
+    ):
+        return {
+            "headline": "No OpenAI Key Found",
+            "detail": "The app couldn't find an OpenAI key in any config location, so live search can't run. Contact your Comp Agent admin.",
+        }
+
     # OpenAI / live search
     if "insufficient_quota" in t or "exceeded your current quota" in t:
         return {
@@ -603,7 +750,7 @@ def _classify_error(text: str) -> dict[str, str]:
     if "http 401" in t or "invalid_api_key" in t or "incorrect api key" in t:
         return {
             "headline": "Live Search Failed: API Key Rejected",
-            "detail": "The OpenAI API key is missing, invalid, or revoked. Update the key in the .env file.",
+            "detail": "The OpenAI key was rejected as invalid or revoked. Contact your Comp Agent admin to update the shared key.",
         }
     if "http 403" in t:
         return {
@@ -620,12 +767,6 @@ def _classify_error(text: str) -> dict[str, str]:
             "headline": "Live Search Failed: Timed Out",
             "detail": "Live search took too long to respond. Try fewer comps or simpler comp guidance, or run again.",
         }
-    if "openai_api_key is not set" in t or ("api key" in t and "not set" in t):
-        return {
-            "headline": "Live Search Disabled: API Key Missing",
-            "detail": "OPENAI_API_KEY is not configured. Set it in the .env file to enable live web search.",
-        }
-
     # Network
     if (
         "connectionerror" in t
@@ -1265,8 +1406,11 @@ INDEX_HTML = r"""<!doctype html>
         resultsEl.innerHTML = html + (wasEmpty ? '' : resultsEl.innerHTML);
       }
     }
-    async function runJob(startUrl, data, title) {
+    async function runJob(startUrl, data, title, onStarted) {
       const started = await post(startUrl, data);
+      if (typeof onStarted === 'function') {
+        try { onStarted(); } catch (err) { /* best-effort hook; never block the run */ }
+      }
       const statusUrl = started.status_url;
       while (true) {
         const res = await fetch(statusUrl);
@@ -1283,12 +1427,47 @@ INDEX_HTML = r"""<!doctype html>
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
+    async function saveSettings() {
+      try {
+        await post('/api/settings', {
+          output_root: value('output_root').trim(),
+          live_search: checked('live_search'),
+        });
+      } catch (err) { /* best-effort; never block a run on settings persistence */ }
+    }
+    async function initPreflight() {
+      let settings = {};
+      try {
+        const res = await fetch('/api/settings');
+        if (res.ok) settings = (await res.json()).settings || {};
+      } catch (err) { /* missing or corrupt settings must never break startup */ }
+      let preflight = null;
+      try {
+        const res = await fetch('/api/preflight');
+        if (res.ok) preflight = await res.json();
+      } catch (err) { /* preflight is advisory; the form still works without it */ }
+      const outputInput = document.getElementById('output_root');
+      if (!outputInput.value.trim()) {
+        const saved = String(settings.output_root || '').trim();
+        const fallback = preflight && preflight.default_output_root ? String(preflight.default_output_root) : '';
+        outputInput.value = saved || fallback;
+      }
+      if (typeof settings.live_search === 'boolean') {
+        document.getElementById('live_search').checked = settings.live_search;
+      }
+      if (preflight && preflight.friendly_error) {
+        resultsEl.className = '';
+        resultsEl.innerHTML = bannerHtml(preflight.friendly_error);
+        statusEl.textContent = preflight.friendly_error.headline;
+      }
+    }
     // Initialize all dynamic inputs
     setupMustIncludeCompsInputs();
     setupCompTypesInputs();
     setupDesignPrioritiesInputs();
     bindScopeInputs();
     refreshScopeTotal();
+    initPreflight();
     document.getElementById('browse_output').addEventListener('click', async () => {
       try {
         await selectOutputFolder();
@@ -1327,7 +1506,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       setBusy(true, 'Starting search...', 'Searching...');
       try {
-        const data = await runJob('/api/discover/start', payload(), 'Searching Comps');
+        const data = await runJob('/api/discover/start', payload(), 'Searching Comps', saveSettings);
         renderResults(data);
         setBusy(false, `Found ${lastCandidates.length} candidates. Select comps to approve.`);
       } catch (err) {

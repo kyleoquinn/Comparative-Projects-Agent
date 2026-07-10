@@ -1057,6 +1057,7 @@ INDEX_HTML = r"""<!doctype html>
     button:disabled { opacity: .5; cursor: not-allowed; }
     #discover { flex: 1.4; }
     #approve { flex: 1; }
+    .footer-output label { display: block; }
     .status { color: var(--muted); font-size: 12.5px; min-height: 16px; }
 
     .loading { display:inline-block; width:15px; height:15px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite; margin-right:8px; }
@@ -1159,19 +1160,6 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </div>
       </div>
-      <div class="section">
-        <div class="section-head"><h2>Output</h2></div>
-        <div class="fields">
-          <div class="field">
-            <label>Output folder</label>
-            <div class="path-row">
-              <input id="output_root" placeholder="e.g., C:\Comp Outputs" required>
-              <button id="browse_output" type="button" class="secondary">Browse</button>
-            </div>
-            <p class="hint">Decks and data save directly here. Use a full path (drive letter or network share).</p>
-          </div>
-        </div>
-      </div>
     </div>
 
     <div class="col col-comp">
@@ -1227,6 +1215,13 @@ INDEX_HTML = r"""<!doctype html>
     </div>
 
     <div class="form-footer">
+      <div class="footer-output">
+        <label>Output folder</label>
+        <div class="path-row">
+          <input id="output_root" placeholder="e.g., C:\Comp Outputs" required>
+          <button id="browse_output" type="button" class="secondary">Browse</button>
+        </div>
+      </div>
       <div class="actions">
         <button id="discover">Search comps</button>
         <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>

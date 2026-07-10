@@ -972,31 +972,40 @@ INDEX_HTML = r"""<!doctype html>
     .ready-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
     .ready-pill.warn .ready-dot { background: var(--warn); }
 
-    /* Layout: two panes, each scrolls independently */
+    /* Layout: 3 columns; footer spans the two input columns, canvas is full-height */
     main {
       display: grid;
-      grid-template-columns: minmax(540px, 47%) 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-rows: minmax(0, 1fr) auto;
       height: calc(100vh - 67px);
     }
-    aside {
-      display: flex; flex-direction: column;
+    .col {
+      overflow-y: auto;
+      padding: 22px 24px 18px;
       border-right: 1px solid var(--line);
-      background: var(--panel);
       min-height: 0;
     }
-    .form-scroll { flex: 1; overflow-y: auto; padding: 20px 26px 10px; }
-    .canvas { overflow-y: auto; padding: 26px 30px; background: var(--bg); min-height: 0; }
-
-    /* Form sections */
-    .section { margin-bottom: 22px; }
-    .section-head { margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-    .section-head h2 {
-      margin: 0; font-size: 11px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .09em; color: var(--faint);
+    .col-project { grid-column: 1; grid-row: 1; }
+    .col-comp { grid-column: 2; grid-row: 1; }
+    .form-footer { grid-column: 1 / 3; grid-row: 2; }
+    .canvas {
+      grid-column: 3; grid-row: 1 / 3;
+      overflow-y: auto; padding: 26px 30px; background: var(--bg); min-height: 0;
     }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 14px; }
+
+    /* Sections + fields (stacked within each column) */
+    .section { margin-bottom: 26px; }
+    .section:last-child { margin-bottom: 4px; }
+    .section-head { margin: 0 0 15px; padding-bottom: 10px; border-bottom: 2px solid var(--line-strong); }
+    .section-head h2 {
+      margin: 0; font-size: 15px; font-weight: 800; letter-spacing: .01em; color: var(--ink);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .section-head h2::before {
+      content: ""; width: 4px; height: 16px; border-radius: 2px; background: var(--accent); flex: none;
+    }
+    .fields { display: flex; flex-direction: column; gap: 14px; }
     .field { display: flex; flex-direction: column; min-width: 0; }
-    .field.span2 { grid-column: 1 / -1; }
     label { font-size: 12px; color: var(--muted); margin: 0 0 5px; font-weight: 600; }
     input, textarea, select {
       width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
@@ -1008,7 +1017,7 @@ INDEX_HTML = r"""<!doctype html>
       box-shadow: 0 0 0 3px var(--accent-soft);
     }
     input::placeholder, textarea::placeholder { color: #aab0aa; }
-    textarea { min-height: 56px; resize: vertical; line-height: 1.4; }
+    textarea { min-height: 60px; resize: vertical; line-height: 1.4; }
     .stack > * + * { margin-top: 8px; }
 
     /* Scope block */
@@ -1016,25 +1025,23 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
       background: #fbfaf6; padding: 11px 13px; display: flex; flex-direction: column; gap: 9px;
     }
-    .scope-row { display: grid; grid-template-columns: 1fr 82px auto; align-items: center; gap: 10px; }
+    .scope-row { display: grid; grid-template-columns: 1fr 74px auto; align-items: center; gap: 9px; }
     .scope-row .check { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); font-weight: 600; }
     .scope-row .check input { width: auto; accent-color: var(--accent); }
-    .scope-count { padding: 7px 9px; }
+    .scope-count { padding: 7px 8px; }
     .scope-extra { font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; }
-    .scope-radius { width: 50px; display: inline-block; padding: 4px 6px; }
-    .scope-total { font-size: 12px; color: var(--muted); text-align: right; padding-top: 2px; border-top: 1px dashed var(--line-strong); }
+    .scope-radius { width: 46px; display: inline-block; padding: 4px 5px; }
+    .scope-total { font-size: 12px; color: var(--muted); text-align: right; padding-top: 3px; border-top: 1px dashed var(--line-strong); }
     .scope-total.over { color: var(--warn); font-weight: 700; }
 
     .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-    .checks { display: flex; gap: 20px; flex-wrap: wrap; }
-    .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
-    .check input { width: auto; accent-color: var(--accent); }
     .hint { margin: 6px 0 0; color: var(--faint); font-size: 12px; line-height: 1.4; }
 
-    /* Footer actions (pinned) */
+    /* Footer actions (spans the two input columns) */
     .form-footer {
       border-top: 1px solid var(--line);
-      padding: 14px 26px; background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 14px 24px; background: var(--panel);
       display: flex; flex-direction: column; gap: 9px;
       box-shadow: 0 -6px 18px rgba(30,40,36,.03);
     }
@@ -1058,11 +1065,11 @@ INDEX_HTML = r"""<!doctype html>
 
     /* Canvas: empty hero */
     #results.empty { padding: 0; color: var(--muted); }
-    .hero { max-width: 440px; margin: 5vh auto 0; text-align: center; }
-    .hero-art { width: 100%; max-width: 340px; margin: 0 auto 24px; display:block; }
-    .hero h2 { margin: 0 0 9px; font-size: 22px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
-    .hero p { margin: 0 auto; max-width: 370px; font-size: 14px; color: var(--muted); line-height: 1.5; }
-    .steps { display: grid; gap: 10px; margin: 26px auto 0; max-width: 370px; text-align: left; }
+    .hero { max-width: 440px; margin: 4vh auto 0; text-align: center; }
+    .hero-art { width: 100%; max-width: 320px; margin: 0 auto 22px; display:block; }
+    .hero h2 { margin: 0 0 9px; font-size: 21px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+    .hero p { margin: 0 auto; max-width: 360px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+    .steps { display: grid; gap: 10px; margin: 24px auto 0; max-width: 360px; text-align: left; }
     .step { display: flex; align-items: center; gap: 13px; padding: 12px 15px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
     .step-num { flex: none; width: 27px; height: 27px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
     .step-text { font-size: 13.5px; font-weight: 600; color: var(--ink); }
@@ -1072,7 +1079,7 @@ INDEX_HTML = r"""<!doctype html>
     .results-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 15px; gap: 12px; }
     .results-head h2 { margin: 0; font-size: 17px; font-weight: 700; }
     .results-head .count { font-size: 12px; color: var(--muted); white-space: nowrap; }
-    .candidate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+    .candidate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
     .candidate {
       border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
       box-shadow: var(--shadow); padding: 13px 15px; display: grid; grid-template-columns: 20px 1fr; gap: 11px; align-items: start;
@@ -1107,10 +1114,10 @@ INDEX_HTML = r"""<!doctype html>
     .banner h3 { margin: 0 0 4px; font-size: 15px; color: var(--warn); }
     .banner p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
 
-    @media (max-width: 900px) {
-      main { grid-template-columns: 1fr; height: auto; }
-      aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .form-scroll, .canvas { overflow: visible; }
+    @media (max-width: 1024px) {
+      main { grid-template-columns: 1fr; grid-template-rows: none; height: auto; }
+      .col, .canvas { grid-column: 1; grid-row: auto; border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+      .form-footer { grid-column: 1; grid-row: auto; border-right: 0; }
     }
   </style>
 </head>
@@ -1126,92 +1133,36 @@ INDEX_HTML = r"""<!doctype html>
     <div class="ready-pill" id="ready_pill"><span class="ready-dot"></span><span id="ready_label">Ready</span></div>
   </header>
   <main>
-    <aside>
-      <div class="form-scroll">
-        <div class="section">
-          <div class="section-head"><h2>Project</h2></div>
-          <div class="grid2">
-            <div class="field span2">
-              <label>Project name</label>
-              <input id="project_name" placeholder="e.g., 200 Vesey Repositioning">
-            </div>
-            <div class="field span2">
-              <label>Address</label>
-              <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
-            </div>
-            <div class="field">
-              <label>Program type</label>
-              <input id="program_type" placeholder="e.g., office repositioning">
-            </div>
-            <div class="field">
-              <label>Time horizon (years)</label>
-              <input id="time_horizon_years" type="number" min="1" placeholder="8">
-            </div>
-            <div class="field span2">
-              <label>Scope summary</label>
-              <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
-            </div>
+    <div class="col col-project">
+      <div class="section">
+        <div class="section-head"><h2>Project</h2></div>
+        <div class="fields">
+          <div class="field">
+            <label>Project name</label>
+            <input id="project_name" placeholder="e.g., 200 Vesey Repositioning">
+          </div>
+          <div class="field">
+            <label>Address</label>
+            <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
+          </div>
+          <div class="field">
+            <label>Program type</label>
+            <input id="program_type" placeholder="e.g., office repositioning">
+          </div>
+          <div class="field">
+            <label>Time horizon (years)</label>
+            <input id="time_horizon_years" type="number" min="1" placeholder="8">
+          </div>
+          <div class="field">
+            <label>Scope summary</label>
+            <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
           </div>
         </div>
-
-        <div class="section">
-          <div class="section-head"><h2>Search direction</h2></div>
-          <div class="grid2">
-            <div class="field span2">
-              <label>Comp guidance</label>
-              <textarea id="comp_guidance" placeholder="e.g., Prioritize recent repositioning projects with strong arrival, amenity, and public realm moves."></textarea>
-            </div>
-            <div class="field">
-              <label>Design priorities</label>
-              <div id="design_priorities_container" class="stack">
-                <input type="text" id="design_priorities_0" placeholder="e.g., arrival experience" class="design-priority-input">
-              </div>
-            </div>
-            <div class="field">
-              <label>Comp types</label>
-              <div id="comp_types_container" class="stack">
-                <input type="text" id="comp_types_0" placeholder="e.g., lobby repositioning" class="comp-type-input">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-head"><h2>Comps &amp; scope</h2></div>
-          <div class="grid2">
-            <div class="field span2">
-              <label>How many comps per geographic scope</label>
-              <div class="scope">
-                <div class="scope-row">
-                  <label class="check"><input id="scope_local_enabled" type="checkbox"> Local</label>
-                  <input id="scope_local_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-                  <span class="scope-extra">within <input id="radius_miles" type="number" min="0" step="0.5" placeholder="3" class="scope-radius"> mi</span>
-                </div>
-                <div class="scope-row">
-                  <label class="check"><input id="scope_national_enabled" type="checkbox"> National</label>
-                  <input id="scope_national_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-                  <span class="scope-extra">same country</span>
-                </div>
-                <div class="scope-row">
-                  <label class="check"><input id="scope_international_enabled" type="checkbox"> International</label>
-                  <input id="scope_international_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-                  <span class="scope-extra">global precedents</span>
-                </div>
-                <div class="scope-total">Total: <span id="scope_total">0</span> / 50</div>
-              </div>
-            </div>
-            <div class="field span2">
-              <label>Must-use comps</label>
-              <div id="must_include_comps_container" class="stack">
-                <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-head"><h2>Output</h2></div>
-          <div class="field span2">
+      </div>
+      <div class="section">
+        <div class="section-head"><h2>Output</h2></div>
+        <div class="fields">
+          <div class="field">
             <label>Output folder</label>
             <div class="path-row">
               <input id="output_root" placeholder="e.g., C:\Comp Outputs" required>
@@ -1219,20 +1170,69 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <p class="hint">Decks and data save directly here. Use a full path (drive letter or network share).</p>
           </div>
-          <div class="checks" style="margin-top:14px;">
-            <label class="check"><input id="live_search" type="checkbox" checked> Live web search</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="col col-comp">
+      <div class="section">
+        <div class="section-head"><h2>Comp focus</h2></div>
+        <div class="fields">
+          <div class="field">
+            <label>Design priorities</label>
+            <div id="design_priorities_container" class="stack">
+              <input type="text" id="design_priorities_0" placeholder="e.g., arrival experience" class="design-priority-input">
+            </div>
+          </div>
+          <div class="field">
+            <label>Comp types</label>
+            <div id="comp_types_container" class="stack">
+              <input type="text" id="comp_types_0" placeholder="e.g., lobby repositioning" class="comp-type-input">
+            </div>
           </div>
         </div>
       </div>
-
-      <div class="form-footer">
-        <div class="actions">
-          <button id="discover">Search comps</button>
-          <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>
+      <div class="section">
+        <div class="section-head"><h2>Scope &amp; selection</h2></div>
+        <div class="fields">
+          <div class="field">
+            <label>How many comps per geographic scope</label>
+            <div class="scope">
+              <div class="scope-row">
+                <label class="check"><input id="scope_local_enabled" type="checkbox"> Local</label>
+                <input id="scope_local_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                <span class="scope-extra">within <input id="radius_miles" type="number" min="0" step="0.5" placeholder="3" class="scope-radius"> mi</span>
+              </div>
+              <div class="scope-row">
+                <label class="check"><input id="scope_national_enabled" type="checkbox"> National</label>
+                <input id="scope_national_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                <span class="scope-extra">same country</span>
+              </div>
+              <div class="scope-row">
+                <label class="check"><input id="scope_international_enabled" type="checkbox"> International</label>
+                <input id="scope_international_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                <span class="scope-extra">global precedents</span>
+              </div>
+              <div class="scope-total">Total: <span id="scope_total">0</span> / 50</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Must-use comps</label>
+            <div id="must_include_comps_container" class="stack">
+              <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
+            </div>
+          </div>
         </div>
-        <p id="status" class="status">Ready.</p>
       </div>
-    </aside>
+    </div>
+
+    <div class="form-footer">
+      <div class="actions">
+        <button id="discover">Search comps</button>
+        <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>
+      </div>
+      <p id="status" class="status">Ready.</p>
+    </div>
 
     <section class="canvas">
       <div id="results" class="empty">
@@ -1336,11 +1336,11 @@ INDEX_HTML = r"""<!doctype html>
         amenity_priorities: designPriorities.join(', '),
         radius_miles: Number(value('radius_miles') || 3),
         time_horizon_years: Number(value('time_horizon_years') || 8),
-        live_search: checked('live_search'),
+        live_search: true,
         user_defined_comps: getLineValues('must-include-comp-input').join('\n'),
         output_root: value('output_root'),
         comparative_projects: {
-          comp_guidance: value('comp_guidance'),
+          comp_guidance: '',
           comp_types: compTypes,
           must_include_comps: mustIncludeComps
         }
@@ -1471,7 +1471,7 @@ INDEX_HTML = r"""<!doctype html>
     function renderResults(data) {
       lastPayload = data.brief;
       lastPayload.output_root = data.output_root;
-      lastPayload.live_search = checked('live_search');
+      lastPayload.live_search = true;
       lastCandidates = data.candidates || [];
       approveBtn.disabled = !lastCandidates.length;
       const banner = bannerHtml(data.live_search_status);
@@ -1552,7 +1552,7 @@ INDEX_HTML = r"""<!doctype html>
       try {
         await post('/api/settings', {
           output_root: value('output_root').trim(),
-          live_search: checked('live_search'),
+          live_search: true,
         });
       } catch (err) { /* best-effort; never block a run on settings persistence */ }
     }
@@ -1572,9 +1572,6 @@ INDEX_HTML = r"""<!doctype html>
         const saved = String(settings.output_root || '').trim();
         const fallback = preflight && preflight.default_output_root ? String(preflight.default_output_root) : '';
         outputInput.value = saved || fallback;
-      }
-      if (typeof settings.live_search === 'boolean') {
-        document.getElementById('live_search').checked = settings.live_search;
       }
       if (preflight && preflight.friendly_error) {
         resultsEl.className = '';

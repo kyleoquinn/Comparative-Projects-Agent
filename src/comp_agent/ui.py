@@ -958,10 +958,10 @@ INDEX_HTML = r"""<!doctype html>
       width: 36px; height: 36px; border-radius: 10px;
       background: linear-gradient(135deg, var(--accent), #3f8577);
       display: grid; place-items: center;
-      color: #fff; font-weight: 800; font-size: 14px; letter-spacing: .02em;
+      color: #fff; font-weight: 800; font-size: 12px; letter-spacing: -.02em;
       box-shadow: var(--shadow);
     }
-    .brand h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+    .brand h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.015em; }
     .brand .sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
     .ready-pill {
       display: inline-flex; align-items: center; gap: 7px;
@@ -1041,8 +1041,8 @@ INDEX_HTML = r"""<!doctype html>
     .form-footer {
       border-top: 1px solid var(--line);
       border-right: 1px solid var(--line);
-      padding: 14px 24px; background: var(--panel);
-      display: flex; flex-direction: column; gap: 9px;
+      padding: 11px 24px 12px; background: var(--panel);
+      display: flex; flex-direction: column; gap: 6px;
       box-shadow: 0 -6px 18px rgba(30,40,36,.03);
     }
     .actions { display: flex; gap: 10px; }
@@ -1057,7 +1057,7 @@ INDEX_HTML = r"""<!doctype html>
     button:disabled { opacity: .5; cursor: not-allowed; }
     #discover { flex: 1.4; }
     #approve { flex: 1; }
-    .footer-output label { display: block; }
+    .footer-output label { display: block; margin-bottom: 4px; }
     .status { color: var(--muted); font-size: 12.5px; min-height: 16px; }
 
     .loading { display:inline-block; width:15px; height:15px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite; margin-right:8px; }
@@ -1125,7 +1125,7 @@ INDEX_HTML = r"""<!doctype html>
 <body>
   <header>
     <div class="brand">
-      <div class="brand-mark">CP</div>
+      <div class="brand-mark">PC&amp;P</div>
       <div>
         <h1>Comparative Projects Deck Generator</h1>
         <p class="sub">Research-backed precedent decks, ready to present.</p>

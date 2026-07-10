@@ -912,305 +912,358 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Comp Study Deck Builder</title>
+  <title>Comparative Projects Deck Generator</title>
   <style>
     :root {
-      --ink: #242424;
-      --muted: #66706c;
-      --line: #d8ddd8;
-      --paper: #fbfaf7;
+      --bg: #f5f4ef;
+      --panel: #ffffff;
+      --ink: #22262a;
+      --muted: #767d78;
+      --faint: #9aa19b;
+      --line: #e8e6de;
+      --line-strong: #dcd9cf;
       --field: #ffffff;
       --accent: #2f6f64;
-      --accent-2: #7b5f33;
+      --accent-hover: #285f56;
+      --accent-soft: #eaf2ef;
       --warn: #a55326;
+      --warn-soft: #fdf3ea;
+      --radius: 12px;
+      --radius-sm: 9px;
+      --shadow: 0 1px 2px rgba(30,40,36,.05), 0 8px 24px rgba(30,40,36,.045);
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
-      font-family: Aptos, Segoe UI, Arial, sans-serif;
+      font-family: Aptos, "Segoe UI", system-ui, Arial, sans-serif;
       color: var(--ink);
-      background: var(--paper);
+      background: var(--bg);
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
     }
+    /* Header */
     header {
-      padding: 22px 28px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 15px 26px;
+      background: var(--panel);
       border-bottom: 1px solid var(--line);
-      background: #ffffff;
     }
-    h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0; }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .brand-mark {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #3f8577);
+      display: grid; place-items: center;
+      color: #fff; font-weight: 800; font-size: 14px; letter-spacing: .02em;
+      box-shadow: var(--shadow);
+    }
+    .brand h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+    .brand .sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+    .ready-pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 12px; color: var(--muted);
+      background: var(--bg); border: 1px solid var(--line);
+      padding: 6px 13px; border-radius: 999px; white-space: nowrap;
+    }
+    .ready-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .ready-pill.warn .ready-dot { background: var(--warn); }
+
+    /* Layout: two panes, each scrolls independently */
     main {
       display: grid;
-      grid-template-columns: minmax(320px, 440px) 1fr;
-      min-height: calc(100vh - 70px);
+      grid-template-columns: minmax(540px, 47%) 1fr;
+      height: calc(100vh - 67px);
     }
     aside {
-      padding: 22px 24px;
+      display: flex; flex-direction: column;
       border-right: 1px solid var(--line);
-      background: #f4f2ec;
+      background: var(--panel);
+      min-height: 0;
     }
-    section { padding: 22px 28px; }
-    label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+    .form-scroll { flex: 1; overflow-y: auto; padding: 20px 26px 10px; }
+    .canvas { overflow-y: auto; padding: 26px 30px; background: var(--bg); min-height: 0; }
+
+    /* Form sections */
+    .section { margin-bottom: 22px; }
+    .section-head { margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .section-head h2 {
+      margin: 0; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .09em; color: var(--faint);
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 14px; }
+    .field { display: flex; flex-direction: column; min-width: 0; }
+    .field.span2 { grid-column: 1 / -1; }
+    label { font-size: 12px; color: var(--muted); margin: 0 0 5px; font-weight: 600; }
     input, textarea, select {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--field);
-      padding: 10px 11px;
-      font: inherit;
-      color: var(--ink);
+      width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+      background: var(--field); padding: 9px 11px; font: inherit; color: var(--ink);
+      transition: border-color .15s, box-shadow .15s;
     }
-    input::placeholder, textarea::placeholder { color: #9ba39e; opacity: 1; }
-    textarea { min-height: 74px; resize: vertical; }
-    .must-include-comp-input, .comp-type-input, .design-priority-input {
-      margin-bottom: 8px;
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
     }
-    .must-include-comp-input:last-child, .comp-type-input:last-child, .design-priority-input:last-child {
-      margin-bottom: 0;
+    input::placeholder, textarea::placeholder { color: #aab0aa; }
+    textarea { min-height: 56px; resize: vertical; line-height: 1.4; }
+    .stack > * + * { margin-top: 8px; }
+
+    /* Scope block */
+    .scope {
+      border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+      background: #fbfaf6; padding: 11px 13px; display: flex; flex-direction: column; gap: 9px;
     }
-    .form-group {
-      margin-top: 22px;
-      padding-top: 18px;
+    .scope-row { display: grid; grid-template-columns: 1fr 82px auto; align-items: center; gap: 10px; }
+    .scope-row .check { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); font-weight: 600; }
+    .scope-row .check input { width: auto; accent-color: var(--accent); }
+    .scope-count { padding: 7px 9px; }
+    .scope-extra { font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; }
+    .scope-radius { width: 50px; display: inline-block; padding: 4px 6px; }
+    .scope-total { font-size: 12px; color: var(--muted); text-align: right; padding-top: 2px; border-top: 1px dashed var(--line-strong); }
+    .scope-total.over { color: var(--warn); font-weight: 700; }
+
+    .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .checks { display: flex; gap: 20px; flex-wrap: wrap; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
+    .check input { width: auto; accent-color: var(--accent); }
+    .hint { margin: 6px 0 0; color: var(--faint); font-size: 12px; line-height: 1.4; }
+
+    /* Footer actions (pinned) */
+    .form-footer {
       border-top: 1px solid var(--line);
+      padding: 14px 26px; background: var(--panel);
+      display: flex; flex-direction: column; gap: 9px;
+      box-shadow: 0 -6px 18px rgba(30,40,36,.03);
     }
-    .form-group h2 {
-      margin: 0 0 4px;
-      font-size: 15px;
-      letter-spacing: 0;
-    }
-    .hint {
-      margin: 0 0 10px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.35;
-    }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .path-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
-    .path-row button { padding-left: 12px; padding-right: 12px; white-space: nowrap; }
-    .checks {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    .check {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--ink);
-    }
-    .check input { width: auto; }
+    .actions { display: flex; gap: 10px; }
     button {
-      border: 0;
-      border-radius: 6px;
-      padding: 10px 14px;
-      background: var(--accent);
-      color: #ffffff;
-      font-weight: 700;
-      cursor: pointer;
+      border: 0; border-radius: var(--radius-sm); padding: 11px 16px;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer;
+      transition: background .15s, opacity .15s;
     }
-    button.secondary { background: #343a37; }
-    button:disabled { opacity: .55; cursor: wait; }
-    .actions { display: flex; gap: 10px; margin-top: 18px; align-items: center; }
-    .status { color: var(--muted); font-size: 13px; }
-    .progress {
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      padding: 14px 0;
-      margin-bottom: 18px;
-    }
-    .progress-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
-    .progress-bar {
-      width: 100%;
-      height: 7px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: #e1ded5;
-    }
-    .progress-fill {
-      width: 0%;
-      height: 100%;
-      background: var(--accent);
-      transition: width .25s ease;
-    }
-    .progress-message {
-      margin-top: 8px;
-      font-size: 14px;
-      color: var(--ink);
-    }
-    .loading {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid #f3f3f3;
-      border-top: 2px solid var(--accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-right: 8px;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .button-loading {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button.secondary { background: #eef1ee; color: var(--ink); border: 1px solid var(--line-strong); }
+    button.secondary:hover:not(:disabled) { background: #e6eae6; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #discover { flex: 1.4; }
+    #approve { flex: 1; }
+    .status { color: var(--muted); font-size: 12.5px; min-height: 16px; }
+
+    .loading { display:inline-block; width:15px; height:15px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite; margin-right:8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .button-loading { display:flex; align-items:center; justify-content:center; }
+
+    /* Canvas: empty hero */
+    #results.empty { padding: 0; color: var(--muted); }
+    .hero { max-width: 440px; margin: 5vh auto 0; text-align: center; }
+    .hero-art { width: 100%; max-width: 340px; margin: 0 auto 24px; display:block; }
+    .hero h2 { margin: 0 0 9px; font-size: 22px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+    .hero p { margin: 0 auto; max-width: 370px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+    .steps { display: grid; gap: 10px; margin: 26px auto 0; max-width: 370px; text-align: left; }
+    .step { display: flex; align-items: center; gap: 13px; padding: 12px 15px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .step-num { flex: none; width: 27px; height: 27px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+    .step-text { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+    .step-text span { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+
+    /* Results */
+    .results-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 15px; gap: 12px; }
+    .results-head h2 { margin: 0; font-size: 17px; font-weight: 700; }
+    .results-head .count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .candidate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
     .candidate {
-      border-top: 1px solid var(--line);
-      padding: 16px 0;
-      display: grid;
-      grid-template-columns: 28px 1fr;
-      gap: 12px;
+      border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+      box-shadow: var(--shadow); padding: 13px 15px; display: grid; grid-template-columns: 20px 1fr; gap: 11px; align-items: start;
     }
-    .candidate h3 { margin: 0 0 5px; font-size: 17px; }
-    .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-    .takeaway { font-size: 14px; line-height: 1.42; max-width: 900px; }
-    .sources {
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid var(--line);
+    .candidate-check { width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+    .candidate h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; line-height: 1.25; }
+    .candidate .meta { color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+    .candidate .takeaway {
+      font-size: 13px; line-height: 1.42; color: #444b4d;
+      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
     }
-    .source { font-size: 13px; margin: 8px 0; color: var(--muted); }
-    .output {
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      padding: 14px 0;
-      margin: 0 0 18px;
-    }
-    .output h2 { margin-top: 0; }
-    .output-grid {
-      display: grid;
-      grid-template-columns: 170px 1fr;
-      gap: 8px 14px;
-      font-size: 13px;
-    }
+    .sources { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .sources h2 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 700; }
+    .source { font-size: 12.5px; margin: 5px 0; color: var(--muted); }
+    .source a { color: var(--accent); text-decoration: none; }
+    .source a:hover { text-decoration: underline; }
+
+    /* Output result card */
+    .output { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; margin: 0 0 16px; }
+    .output h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent); }
+    .output-grid { display: grid; grid-template-columns: 128px 1fr; gap: 8px 14px; font-size: 12.5px; }
     .output-grid div:nth-child(odd) { color: var(--muted); }
-    .empty {
-      color: var(--muted);
-      padding: 60px 0;
-      max-width: 620px;
-      line-height: 1.5;
-    }
-    code { background: #ece8df; padding: 2px 5px; border-radius: 4px; }
-    .banner {
-      border-radius: 8px;
-      padding: 14px 16px;
-      margin: 0 0 18px;
-      border-left: 4px solid var(--warn);
-      background: #fdf3ea;
-    }
+    code { background: #f0ede4; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+
+    /* Progress + banner */
+    .progress { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 16px; }
+    .progress-top { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; margin-bottom: 9px; }
+    .progress-bar { width: 100%; height: 7px; border-radius: 999px; background: #ebe8df; overflow: hidden; }
+    .progress-fill { width: 0%; height: 100%; background: var(--accent); transition: width .25s ease; }
+    .progress-message { margin-top: 9px; font-size: 14px; color: var(--ink); }
+    .banner { border-radius: var(--radius); padding: 14px 16px; margin: 0 0 16px; border-left: 4px solid var(--warn); background: var(--warn-soft); }
     .banner h3 { margin: 0 0 4px; font-size: 15px; color: var(--warn); }
     .banner p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
-    .scope-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--field);
-    }
-    .scope-row {
-      display: grid;
-      grid-template-columns: 130px 90px 1fr;
-      align-items: center;
-      gap: 10px;
-    }
-    .scope-row .check { margin: 0; font-size: 13px; color: var(--ink); }
-    .scope-count { width: 100%; }
-    .scope-extra { font-size: 12px; color: var(--muted); }
-    .scope-radius { width: 56px; display: inline-block; padding: 4px 6px; }
-    .scope-total { font-size: 12px; color: var(--muted); margin-top: 2px; }
-    .scope-total.over { color: var(--warn); font-weight: 700; }
-    @media (max-width: 840px) {
-      main { grid-template-columns: 1fr; }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; height: auto; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .form-scroll, .canvas { overflow: visible; }
     }
   </style>
 </head>
 <body>
-  <header><h1>Comp Study Deck Builder</h1></header>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">CP</div>
+      <div>
+        <h1>Comparative Projects Deck Generator</h1>
+        <p class="sub">Research-backed precedent decks, ready to present.</p>
+      </div>
+    </div>
+    <div class="ready-pill" id="ready_pill"><span class="ready-dot"></span><span id="ready_label">Ready</span></div>
+  </header>
   <main>
     <aside>
-      <div class="form-group">
-        <h2>Project brief</h2>
-        <p class="hint">These are the fields the future frontend or RFP autofill should send to this agent.</p>
-        <label>Project name</label>
-        <input id="project_name" placeholder="e.g., 200 Vesey Repositioning">
-        <label>Address</label>
-        <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
-        <label>Program type</label>
-        <input id="program_type" placeholder="e.g., office repositioning">
-        <label>Scope summary</label>
-        <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
-        <label>Design priorities</label>
-        <div id="design_priorities_container">
-          <input type="text" id="design_priorities_0" placeholder="Design priority (e.g., arrival experience)" class="design-priority-input">
-        </div>
-      </div>
-      <div class="form-group">
-        <h2>Comparative projects</h2>
-        <p class="hint">The agent searches on its own, then adds any must-use comps you provide.</p>
-        <label>Comp guidance</label>
-        <textarea id="comp_guidance" placeholder="e.g., Prioritize recent repositioning projects with strong arrival, amenity, and public realm moves."></textarea>
-        <label>Comp types</label>
-        <div id="comp_types_container">
-          <input type="text" id="comp_types_0" placeholder="Comp type (e.g., office lobby repositioning)" class="comp-type-input">
-        </div>
-        <label>Comp scopes &amp; counts</label>
-        <p class="hint">Pick how many comps to pull from each geographic scope. Leave blank to skip a scope. Total is capped at 50.</p>
-        <div class="scope-grid">
-          <div class="scope-row">
-            <label class="check"><input id="scope_local_enabled" type="checkbox"> Local</label>
-            <input id="scope_local_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-            <span class="scope-extra">within <input id="radius_miles" type="number" min="0" step="0.5" placeholder="3" class="scope-radius"> mi</span>
+      <div class="form-scroll">
+        <div class="section">
+          <div class="section-head"><h2>Project</h2></div>
+          <div class="grid2">
+            <div class="field span2">
+              <label>Project name</label>
+              <input id="project_name" placeholder="e.g., 200 Vesey Repositioning">
+            </div>
+            <div class="field span2">
+              <label>Address</label>
+              <input id="address" placeholder="e.g., 200 Vesey Street, New York, NY">
+            </div>
+            <div class="field">
+              <label>Program type</label>
+              <input id="program_type" placeholder="e.g., office repositioning">
+            </div>
+            <div class="field">
+              <label>Time horizon (years)</label>
+              <input id="time_horizon_years" type="number" min="1" placeholder="8">
+            </div>
+            <div class="field span2">
+              <label>Scope summary</label>
+              <textarea id="scope_summary" placeholder="e.g., Lobby, tenant amenity, retail, and public realm upgrades."></textarea>
+            </div>
           </div>
-          <div class="scope-row">
-            <label class="check"><input id="scope_national_enabled" type="checkbox"> National</label>
-            <input id="scope_national_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-            <span class="scope-extra">same country, outside local market</span>
-          </div>
-          <div class="scope-row">
-            <label class="check"><input id="scope_international_enabled" type="checkbox"> International</label>
-            <input id="scope_international_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
-            <span class="scope-extra">marquee global precedents</span>
-          </div>
-          <div class="scope-total">Total: <span id="scope_total">0</span> / 50</div>
         </div>
-        <label>Must-use comps</label>
-        <div id="must_include_comps_container">
-          <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
+
+        <div class="section">
+          <div class="section-head"><h2>Search direction</h2></div>
+          <div class="grid2">
+            <div class="field span2">
+              <label>Comp guidance</label>
+              <textarea id="comp_guidance" placeholder="e.g., Prioritize recent repositioning projects with strong arrival, amenity, and public realm moves."></textarea>
+            </div>
+            <div class="field">
+              <label>Design priorities</label>
+              <div id="design_priorities_container" class="stack">
+                <input type="text" id="design_priorities_0" placeholder="e.g., arrival experience" class="design-priority-input">
+              </div>
+            </div>
+            <div class="field">
+              <label>Comp types</label>
+              <div id="comp_types_container" class="stack">
+                <input type="text" id="comp_types_0" placeholder="e.g., lobby repositioning" class="comp-type-input">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head"><h2>Comps &amp; scope</h2></div>
+          <div class="grid2">
+            <div class="field span2">
+              <label>How many comps per geographic scope</label>
+              <div class="scope">
+                <div class="scope-row">
+                  <label class="check"><input id="scope_local_enabled" type="checkbox"> Local</label>
+                  <input id="scope_local_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                  <span class="scope-extra">within <input id="radius_miles" type="number" min="0" step="0.5" placeholder="3" class="scope-radius"> mi</span>
+                </div>
+                <div class="scope-row">
+                  <label class="check"><input id="scope_national_enabled" type="checkbox"> National</label>
+                  <input id="scope_national_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                  <span class="scope-extra">same country</span>
+                </div>
+                <div class="scope-row">
+                  <label class="check"><input id="scope_international_enabled" type="checkbox"> International</label>
+                  <input id="scope_international_count" type="number" min="0" max="50" placeholder="count" class="scope-count">
+                  <span class="scope-extra">global precedents</span>
+                </div>
+                <div class="scope-total">Total: <span id="scope_total">0</span> / 50</div>
+              </div>
+            </div>
+            <div class="field span2">
+              <label>Must-use comps</label>
+              <div id="must_include_comps_container" class="stack">
+                <input type="text" id="must_include_comps_0" placeholder="Project name | Location | Note (optional)" class="must-include-comp-input">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head"><h2>Output</h2></div>
+          <div class="field span2">
+            <label>Output folder</label>
+            <div class="path-row">
+              <input id="output_root" placeholder="e.g., C:\Comp Outputs" required>
+              <button id="browse_output" type="button" class="secondary">Browse</button>
+            </div>
+            <p class="hint">Decks and data save directly here. Use a full path (drive letter or network share).</p>
+          </div>
+          <div class="checks" style="margin-top:14px;">
+            <label class="check"><input id="live_search" type="checkbox" checked> Live web search</label>
+          </div>
         </div>
       </div>
-      <label>Time horizon (years)</label>
-      <input id="time_horizon_years" type="number" min="1" placeholder="e.g., 8">
-      <label>Search modes</label>
-      <div class="checks">
-        <label class="check"><input id="live_search" type="checkbox" checked> OpenAI live web</label>
-        <label class="check"><input id="archive_sources" type="checkbox" checked disabled> Save sources</label>
+
+      <div class="form-footer">
+        <div class="actions">
+          <button id="discover">Search comps</button>
+          <button id="approve" class="secondary" disabled>Approve &amp; generate deck</button>
+        </div>
+        <p id="status" class="status">Ready.</p>
       </div>
-      <label>Output folder <span style="color: var(--warn);">(required)</span></label>
-      <p class="hint">Decks save directly here. Must be an absolute path.</p>
-      <div class="path-row">
-        <input id="output_root" placeholder="e.g., C:\Users\Name\Desktop\Comp Outputs" required>
-        <button id="browse_output" type="button" class="secondary">Browse</button>
-      </div>
-      <div class="actions">
-        <button id="discover">Search comps</button>
-        <button id="approve" class="secondary" disabled>Approve selected</button>
-      </div>
-      <p id="status" class="status">Ready.</p>
     </aside>
-    <section>
-      <div id="results" class="empty">Run a live search, approve comps, and generate the standardized Comp Study Deck.</div>
+
+    <section class="canvas">
+      <div id="results" class="empty">
+        <div class="hero">
+          <svg class="hero-art" viewBox="0 0 360 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Deck preview illustration">
+            <rect x="44" y="40" width="272" height="150" rx="12" fill="#ffffff" stroke="#e8e6de"/>
+            <rect x="30" y="26" width="272" height="150" rx="12" fill="#ffffff" stroke="#e2e0d7"/>
+            <rect x="16" y="12" width="272" height="150" rx="12" fill="#ffffff" stroke="#dcd9cf"/>
+            <path d="M16 24 a12 12 0 0 1 12 -12 h248 a12 12 0 0 1 12 12 v22 h-272 z" fill="#eaf2ef"/>
+            <rect x="30" y="24" width="120" height="10" rx="5" fill="#2f6f64"/>
+            <rect x="30" y="62" width="104" height="80" rx="8" fill="#eef1ee"/>
+            <circle cx="58" cy="86" r="9" fill="#cfdbd4"/>
+            <path d="M30 128 l26 -24 l22 18 l30 -30 v42 a8 8 0 0 1 -8 8 h-62 a8 8 0 0 1 -8 -8 z" fill="#d7e3dc"/>
+            <rect x="150" y="64" width="118" height="8" rx="4" fill="#e2e0d7"/>
+            <rect x="150" y="82" width="132" height="7" rx="3.5" fill="#eef0ec"/>
+            <rect x="150" y="97" width="100" height="7" rx="3.5" fill="#eef0ec"/>
+            <rect x="150" y="120" width="15" height="22" rx="3" fill="#c3d8cf"/>
+            <rect x="172" y="112" width="15" height="30" rx="3" fill="#93bdb0"/>
+            <rect x="194" y="124" width="15" height="18" rx="3" fill="#c3d8cf"/>
+            <rect x="216" y="106" width="15" height="36" rx="3" fill="#2f6f64"/>
+            <rect x="238" y="118" width="15" height="24" rx="3" fill="#93bdb0"/>
+          </svg>
+          <h2>Build a comparative-projects deck</h2>
+          <p>Describe the project, review the comps we surface from live research, and generate a client-ready PowerPoint.</p>
+          <div class="steps">
+            <div class="step"><div class="step-num">1</div><div class="step-text">Describe the project<span>Name, program, priorities, and how many comps per scope</span></div></div>
+            <div class="step"><div class="step-num">2</div><div class="step-text">Review &amp; approve comps<span>We search the web; you keep the ones that fit</span></div></div>
+            <div class="step"><div class="step-num">3</div><div class="step-text">Generate the deck<span>A formatted deck and source-backed data land in your folder</span></div></div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
   <script>
@@ -1449,7 +1502,7 @@ INDEX_HTML = r"""<!doctype html>
         </article>`;
       }).join('');
       const sources = (data.source_log || []).slice(0, 12).map(s => `<div class="source">${escapeHtml(s.source_name)} · <a href="${s.url_or_search}" target="_blank">${escapeHtml(s.source_type)}</a></div>`).join('');
-      resultsEl.innerHTML = `${banner}<h2>Candidate comps</h2>${candidates}<div class="sources"><h2>Sources</h2>${sources || '<div class="source">No source URLs captured.</div>'}</div>`;
+      resultsEl.innerHTML = `${banner}<div class="results-head"><h2>Candidate comps</h2><span class="count">${lastCandidates.length} found · select the ones to keep</span></div><div class="candidate-grid">${candidates}</div><div class="sources"><h2>Sources</h2>${sources || '<div class="source">No source URLs captured.</div>'}</div>`;
     }
     function escapeHtml(text) {
       return String(text || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));

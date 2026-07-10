@@ -128,7 +128,7 @@ def find_running_instance(host: str, port: int) -> bool:
             # title ever changes, detection degrades benignly to the
             # free-port fallback.
             body = response.read(65536).decode("utf-8", errors="replace")
-            return "Comp Study Deck Builder" in body
+            return "Comparative Projects Deck Generator" in body
     except Exception:
         return False
 

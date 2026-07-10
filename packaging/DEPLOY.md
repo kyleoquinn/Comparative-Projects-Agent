@@ -35,7 +35,7 @@ dist/CompAgent/CompAgent.exe --no-browser
 ```
 
 The second command should print `Comp Agent is running at http://127.0.0.1:8765/`
-(or a fallback port); open that URL, confirm the "Comp Study Deck Builder" form
+(or a fallback port); open that URL, confirm the "Comparative Projects Deck Generator" form
 renders, then Ctrl+C.
 
 ## 2. Deploy layout on the share
@@ -134,7 +134,7 @@ Run on a **clean machine — no Python installed** — logged in as a normal
 - [ ] No SmartScreen block (or the documented one-time Unblock works — see §6).
 - [ ] Console window appears; version line prints; "OpenAI key: found."
 - [ ] Browser opens automatically to `http://127.0.0.1:<port>/` and the
-      "Comp Study Deck Builder" form renders.
+      "Comparative Projects Deck Generator" form renders.
 - [ ] Launch a **second** copy while the first is running → it falls back to
       another port and both work.
 - [ ] "Browse…" for the output folder opens the native picker (tkinter is in

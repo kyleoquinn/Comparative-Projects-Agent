@@ -81,18 +81,11 @@ http://127.0.0.1:8765
 ## Documentation
 
 - [API contract](docs/api_contract.md) — the local HTTP API and the future hosted shape
-- [Comp agent input packet](docs/comp_agent_input_packet.md)
-- [UI inputs](docs/frontend_inputs.md)
 - [Output contract](docs/output_contract.md)
 - [Local development](docs/local_dev.md) — setup, config resolution order, env vars
 - [Architecture notes](docs/architecture.md)
 - [Stage contracts](docs/stage_contracts.md) — authoritative stage/file contracts
 - [Build & deploy](packaging/DEPLOY.md) — packaged desktop distribution
-
-Example request payloads:
-
-- [Discovery request](examples/frontend_discovery_request.json)
-- [Approval request](examples/frontend_approval_request.json)
 
 ## Current Local API
 

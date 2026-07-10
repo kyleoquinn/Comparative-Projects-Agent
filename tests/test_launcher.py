@@ -56,7 +56,7 @@ def test_server_starts_and_serves_index(tmp_path) -> None:
     with opener.open(f"http://{app.DEFAULT_HOST}:{port}/", timeout=5) as response:
         assert response.status == 200
         body = response.read().decode("utf-8")
-    assert "Comp Study Deck Builder" in body
+    assert "Comparative Projects Deck Generator" in body
 
     # A second launch must detect this instance instead of racing for a port.
     assert app.find_running_instance(app.DEFAULT_HOST, port) is True

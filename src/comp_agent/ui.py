@@ -142,11 +142,21 @@ def _brief_from_payload(payload: dict[str, Any]) -> ProjectBrief:
     return ProjectBrief.from_dict(normalized)
 
 
+def _require_output_root(payload: dict[str, Any]) -> str:
+    raw = str(payload.get("output_root") or "").strip()
+    if not raw:
+        raise ValueError("Output folder is required. Pick a destination folder before running.")
+    if not Path(raw).is_absolute():
+        raise ValueError(f"Output folder must be an absolute path. Got: {raw}")
+    return raw
+
+
 def _run_discover(payload: dict[str, Any], default_output_root: str, update: JobUpdate | None = None) -> dict[str, Any]:
     def progress(message: str, percent: int) -> None:
         if update:
             update(message, percent)
 
+    output_root = _require_output_root(payload)
     progress("Preparing project brief", 5)
     brief = _brief_from_payload(payload)
     must_include_comps = _must_include_comps_for_discovery(brief, str(payload.get("user_defined_comps") or ""))
@@ -159,7 +169,6 @@ def _run_discover(payload: dict[str, Any], default_output_root: str, update: Job
             }
             for item in must_include_comps
         ]
-    output_root = str(payload.get("output_root") or default_output_root)
 
     previous_live_search = os.environ.get("COMP_AGENT_LIVE_SEARCH")
     if payload.get("live_search", True):
@@ -204,9 +213,9 @@ def _run_approve(payload: dict[str, Any], default_output_root: str, update: JobU
         if update:
             update(message, percent)
 
+    output_root = _require_output_root(payload)
     progress("Reading approved comp selection", 5)
     brief = _brief_from_payload(payload.get("brief") or payload)
-    output_root = str(payload.get("output_root") or default_output_root)
     raw_ids = payload.get("comp_ids") or payload.get("approved_ids") or []
     comp_ids = [str(value) for value in raw_ids if value]
 
@@ -979,9 +988,10 @@ INDEX_HTML = r"""<!doctype html>
         <label class="check"><input id="live_search" type="checkbox" checked> OpenAI live web</label>
         <label class="check"><input id="archive_sources" type="checkbox" checked disabled> Save sources</label>
       </div>
-      <label>Output root</label>
+      <label>Output folder <span style="color: var(--warn);">(required)</span></label>
+      <p class="hint">Decks save directly here. Must be an absolute path.</p>
       <div class="path-row">
-        <input id="output_root" placeholder="e.g., C:\Users\Name\Desktop\Comp Outputs">
+        <input id="output_root" placeholder="e.g., C:\Users\Name\Desktop\Comp Outputs" required>
         <button id="browse_output" type="button" class="secondary">Browse</button>
       </div>
       <div class="actions">
@@ -1287,7 +1297,24 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
     
+    function validateOutputRoot() {
+      const raw = value('output_root').trim();
+      if (!raw) {
+        statusEl.textContent = 'Pick an output folder before searching.';
+        document.getElementById('output_root').focus();
+        return false;
+      }
+      const isAbsolute = /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\') || raw.startsWith('/');
+      if (!isAbsolute) {
+        statusEl.textContent = 'Output folder must be an absolute path (e.g., C:\\Comp Outputs).';
+        document.getElementById('output_root').focus();
+        return false;
+      }
+      return true;
+    }
+
     document.getElementById('discover').addEventListener('click', async () => {
+      if (!validateOutputRoot()) return;
       const compsPerScope = readScopeCounts();
       const total = scopeTotal(compsPerScope);
       if (total <= 0) {

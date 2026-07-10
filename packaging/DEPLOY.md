@@ -41,12 +41,12 @@ renders, then Ctrl+C.
 ## 2. Deploy layout on the share
 
 Deploy home (confirmed): `X:\28_AI\_AI AGENTS` — always referenced by its UNC
-form `\\datafiles\28_AI\_AI AGENTS` in configs and shortcuts, **never** the
+form `\\datafiles\reference\28_AI\_AI AGENTS` in configs and shortcuts, **never** the
 `X:` drive letter (drive mappings differ per machine; UNC is the same for
 everyone on VPN).
 
 ```
-\\datafiles\28_AI\_AI AGENTS\
+\\datafiles\reference\28_AI\_AI AGENTS\
 ├── ▶ Start Comp Agent.lnk          <- the one thing users click
 ├── _app\                           <- hidden; the onedir bundle
 │   ├── CompAgent.exe
@@ -58,12 +58,12 @@ everyone on VPN).
 Steps:
 
 1. Copy the entire `dist/CompAgent/` folder to the share as
-   `\\datafiles\28_AI\_AI AGENTS\_app`.
+   `\\datafiles\reference\28_AI\_AI AGENTS\_app`.
 2. Mark `_app` hidden so users don't wander into it:
-   `attrib +h "\\datafiles\28_AI\_AI AGENTS\_app"`
+   `attrib +h "\\datafiles\reference\28_AI\_AI AGENTS\_app"`
 3. Create the shortcut at the top level:
    - Right-click in `X:\28_AI\_AI AGENTS` → New → Shortcut.
-   - Target: `\\datafiles\28_AI\_AI AGENTS\_app\CompAgent.exe`
+   - Target: `\\datafiles\reference\28_AI\_AI AGENTS\_app\CompAgent.exe`
      (UNC target, so the shortcut works regardless of each user's drive letters).
    - Name it `▶ Start Comp Agent`.
    - Leave "Start in" blank or set it to the user's home; the app does not
@@ -75,11 +75,11 @@ Steps:
 
    ```powershell
    $ws = New-Object -ComObject WScript.Shell
-   $lnk = $ws.CreateShortcut('\\datafiles\28_AI\_AI AGENTS\▶ Start Comp Agent.lnk')
-   $lnk.TargetPath = '\\datafiles\28_AI\_AI AGENTS\_app\CompAgent.exe'
+   $lnk = $ws.CreateShortcut('\\datafiles\reference\28_AI\_AI AGENTS\▶ Start Comp Agent.lnk')
+   $lnk.TargetPath = '\\datafiles\reference\28_AI\_AI AGENTS\_app\CompAgent.exe'
    $lnk.Description = 'Start the Comp Agent deck builder'
    # Optional custom icon:
-   # $lnk.IconLocation = '\\datafiles\28_AI\_AI AGENTS\_app\comp_agent.ico,0'
+   # $lnk.IconLocation = '\\datafiles\reference\28_AI\_AI AGENTS\_app\comp_agent.ico,0'
    $lnk.Save()
    ```
 
@@ -94,7 +94,7 @@ The key is **never** baked into the exe. The app resolves config at startup in
 layered order (process env → `COMP_AGENT_CONFIG` → app-adjacent file → shared
 UNC default → repo `.env`); for office deploys, use the shared default:
 
-- Path: `\\datafiles\28_AI\_AI AGENTS\CompAgent\comp_agent.config.json`
+- Path: `\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\comp_agent.config.json`
   (a `comp_agent.env` KEY=VALUE file also works; JSON is checked first).
 - Contents (Notepad-editable):
 
@@ -151,16 +151,16 @@ Run on a **clean machine — no Python installed** — logged in as a normal
 
 1. **SmartScreen / Mark-of-the-Web** — an exe launched from a network share can
    trigger "Windows protected your PC." Options: IT whitelists the
-   `\\datafiles\28_AI\_AI AGENTS` path (Intune/GPO), signs the exe, or each
+   `\\datafiles\reference\28_AI\_AI AGENTS` path (Intune/GPO), signs the exe, or each
    user does a one-time Unblock (file Properties → Unblock, or "More info →
    Run anyway"). This is the #1 thing that makes a network-launched tool feel
    broken — clear it early.
 2. **Antivirus whitelist** — PyInstaller bundles are sometimes flagged by AV
-   heuristics. Proactively whitelist the `\\datafiles\28_AI\_AI AGENTS\_app`
+   heuristics. Proactively whitelist the `\\datafiles\reference\28_AI\_AI AGENTS\_app`
    folder (and the top-level shortcut path) with whatever endpoint protection
    the office runs.
 3. **VPN / share reachability** — the key config lives on the share, so users
    must have the same VPN/share access to get live search. If the share is
    unreachable the app still starts (placeholder data) and tells the user to
    check their VPN; confirm with IT that all intended users can read
-   `\\datafiles\28_AI\_AI AGENTS\CompAgent\`.
+   `\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\`.

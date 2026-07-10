@@ -98,7 +98,7 @@ Kyle's decision:
 1. **Externalize the key into a config file on the shared network drive**,
    separate from the app binary. **Deploy home (confirmed with Kyle):**
    `X:\28_AI\_AI AGENTS` (a mapping of `\\datafiles`). Reference the config by its
-   **UNC path** (`\\datafiles\28_AI\_AI AGENTS\...`), **not** the `X:` drive
+   **UNC path** (`\\datafiles\reference\28_AI\_AI AGENTS\...`), **not** the `X:` drive
    letter — drive-letter mappings differ per user/machine and silently break;
    the UNC path is identical for everyone on VPN. The app reads it at startup.
 2. **Nothing secret sits in the install folder.** The only local pointer, if any,
@@ -364,7 +364,7 @@ Land each workstream as its own small PR with `pytest` green.
 1. **Deploy home — CONFIRMED:** `X:\28_AI\_AI AGENTS` (`\\datafiles`). Fable 5 uses
    the **UNC path** for the key-config default lookup and deploy docs. Kyle: confirm
    the exact filename/subfolder for the key config (e.g.
-   `\\datafiles\28_AI\_AI AGENTS\CompAgent\comp_agent.config`).
+   `\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\comp_agent.config`).
 2. **Key access — Kyle's call, RELAXED:** all VPN users reading the config folder is
    acceptable; no NTFS restriction required now. The requirement is UX (no key
    entry, no loose local key file), not hard secrecy. Restricting the folder to an

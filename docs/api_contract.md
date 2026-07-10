@@ -41,13 +41,14 @@ payload — only key names and source paths.
 {
   "ok": true,
   "openai_key_present": true,
+  "openai_reachable": true,
   "key_source": "shared",
   "share_reachable": true,
   "default_output_root": "C:\\Users\\name\\Documents\\Comp Packages",
   "layers": [
     {
       "layer": "shared",
-      "source": "\\\\datafiles\\28_AI\\_AI AGENTS\\CompAgent\\comp_agent.config.json",
+      "source": "\\\\datafiles\\reference\\28_AI\\_AI AGENTS\\CompAgent\\comp_agent.config.json",
       "status": "loaded",
       "format": "json",
       "keys_set": ["OPENAI_API_KEY"],
@@ -58,17 +59,26 @@ payload — only key names and source paths.
 }
 ```
 
-- `ok` / `openai_key_present` — whether `OPENAI_API_KEY` resolved.
+- `ok` — key resolved AND (when checked) the OpenAI API is reachable.
+- `openai_key_present` — whether `OPENAI_API_KEY` resolved.
+- `openai_reachable` — `true`/`false` from an unauthenticated reachability
+  probe of `api.openai.com` (the key never leaves the process); `null` when
+  skipped because no key resolved.
 - `key_source` — best-effort name of the config layer that supplied the key:
   `"env"`, `"explicit"`, `"app_dir"`, `"shared"`, `"dotenv"`, or `null`.
 - `share_reachable` — `true`/`false`, or `null` when the shared layer was not
-  probed (e.g. skipped because `COMP_AGENT_CONFIG` overrides it).
+  probed (e.g. skipped because `COMP_AGENT_CONFIG` overrides it). `false`
+  covers both a hung probe (timeout) and a fast network failure (the common
+  off-VPN DNS case).
 - `layers` — the per-layer resolution report from `comp_agent.config`
-  (`status` is `loaded` | `missing` | `timeout` | `parse-error` | `skipped`).
+  (`status` is `loaded` | `missing` | `unreachable` | `timeout` |
+  `parse-error` | `skipped`). Preflight resolution is read-only: it never
+  writes env vars into the running process.
 - `friendly_error` — `null` when healthy; otherwise
   `{"headline": "...", "detail": "..."}` with non-technical copy
   ("Can't Reach the Shared Key Config" for VPN/share problems,
-  "No OpenAI Key Found" when no layer carries the key).
+  "No OpenAI Key Found" when no layer carries the key,
+  "Can't Reach OpenAI" when the key resolved but the API is blocked).
 
 ### Per-User Settings
 
@@ -144,9 +154,13 @@ Request body:
   "live_search": true,
   "user_defined_comps": "660 Fifth Avenue | New York, NY | Office lobby precedent\n343 Madison | New York, NY | Office tower precedent",
   "auto_approve_user_comps": false,
-  "output_root": "projects_ui"
+  "output_root": "C:\\Comp Outputs"
 }
 ```
+
+`output_root` is **required and must be an absolute path** (drive-letter or
+UNC). A missing or relative value fails the job before any work starts, with
+an "Output Folder Problem" `friendly_error`.
 
 Response:
 
@@ -190,7 +204,7 @@ Response when complete:
   "elapsed_seconds": 84.2,
   "result": {
     "brief": {},
-    "output_root": "projects_ui",
+    "output_root": "C:\\Comp Outputs",
     "paths": {},
     "candidates": [],
     "source_log": []
@@ -253,27 +267,27 @@ Request body:
     "200-vesey-test-study-660-fifth-avenue",
     "200-vesey-test-study-1271-avenue-of-the-americas"
   ],
-  "output_root": "projects_ui",
+  "output_root": "C:\\Comp Outputs",
   "live_search": true
 }
 ```
 
-The job status endpoint is the same as discovery. When complete, `result.paths` contains output files.
+`output_root` is required and absolute, same as discovery.
 
-Important returned paths:
+The job status endpoint is the same as discovery. When complete, `result.paths` contains output files (absolute, rooted under the chosen output folder):
 
 ```json
 {
-  "comp_study_deck": "projects_ui/project-slug/outputs/comp_study_deck.pptx",
-  "deck_data": "projects_ui/project-slug/outputs/json/deck_data.json",
-  "deck_strategy": "projects_ui/project-slug/outputs/json/deck_strategy.json",
-  "approved_comps_normalized": "projects_ui/project-slug/outputs/json/approved_comps_normalized.json",
-  "source_metadata": "projects_ui/project-slug/outputs/json/source_metadata.json",
-  "diligence_notes": "projects_ui/project-slug/outputs/json/diligence_notes.json",
-  "deck_audit": "projects_ui/project-slug/outputs/json/deck_audit.json",
-  "field_repair_tasks": "projects_ui/project-slug/outputs/json/field_repair_tasks.json",
-  "field_repair_results": "projects_ui/project-slug/outputs/json/field_repair_results.json",
-  "image_manifest": "projects_ui/project-slug/outputs/json/image_manifest.json"
+  "comp_study_deck": "C:\\Comp Outputs\\project-slug\\outputs\\comp_study_deck.pptx",
+  "deck_data": "C:\\Comp Outputs\\project-slug\\outputs\\json\\deck_data.json",
+  "deck_strategy": "C:\\Comp Outputs\\project-slug\\outputs\\json\\deck_strategy.json",
+  "approved_comps_normalized": "C:\\Comp Outputs\\project-slug\\outputs\\json\\approved_comps_normalized.json",
+  "source_metadata": "C:\\Comp Outputs\\project-slug\\outputs\\json\\source_metadata.json",
+  "diligence_notes": "C:\\Comp Outputs\\project-slug\\outputs\\json\\diligence_notes.json",
+  "deck_audit": "C:\\Comp Outputs\\project-slug\\outputs\\json\\deck_audit.json",
+  "field_repair_tasks": "C:\\Comp Outputs\\project-slug\\outputs\\json\\field_repair_tasks.json",
+  "field_repair_results": "C:\\Comp Outputs\\project-slug\\outputs\\json\\field_repair_results.json",
+  "image_manifest": "C:\\Comp Outputs\\project-slug\\outputs\\json\\image_manifest.json"
 }
 ```
 

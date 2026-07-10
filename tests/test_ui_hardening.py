@@ -37,6 +37,9 @@ def isolated_env(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     monkeypatch.chdir(tmp_path)
+    # The preflight's OpenAI reachability probe is a real network call; tests
+    # must stay deterministic and offline-safe.
+    monkeypatch.setattr(ui, "_openai_reachable", lambda *args, **kwargs: True)
     yield
     os.environ.clear()
     os.environ.update(saved)
@@ -54,8 +57,14 @@ def ui_server():
         server.server_close()
 
 
+# Loopback requests must never route through a system/corporate proxy, or
+# these tests fail on any machine with a registry proxy that doesn't bypass
+# 127.0.0.1 (the Windows '<local>' rule does not match dotted hosts).
+_NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_get(base: str, path: str) -> tuple[int, str]:
-    with urllib.request.urlopen(base + path, timeout=10) as res:
+    with _NO_PROXY.open(base + path, timeout=10) as res:
         return res.status, res.read().decode("utf-8")
 
 
@@ -66,7 +75,7 @@ def _http_post(base: str, path: str, payload: dict) -> tuple[int, str]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as res:
+    with _NO_PROXY.open(request, timeout=10) as res:
         return res.status, res.read().decode("utf-8")
 
 
@@ -121,7 +130,7 @@ def test_preflight_unreachable_share_shows_vpn_message(monkeypatch):
         config, "SHARED_CONFIG_FILES", (r"\\unreachable\share\comp_agent.env",)
     )
     monkeypatch.setattr(
-        config, "_read_file_with_timeout", lambda path, timeout: (None, True)
+        config, "_read_file_with_timeout", lambda path, timeout: (None, "timeout")
     )
 
     report = ui._preflight_report()
@@ -131,6 +140,61 @@ def test_preflight_unreachable_share_shows_vpn_message(monkeypatch):
     friendly = report["friendly_error"]
     assert friendly["headline"] == "Can't Reach the Shared Key Config"
     assert "vpn" in friendly["detail"].lower()
+
+
+def test_preflight_fast_share_failure_also_shows_vpn_message(monkeypatch):
+    """Off-VPN DNS failures fail FAST, not by timeout — same friendly copy."""
+    monkeypatch.setattr(
+        config, "SHARED_CONFIG_FILES", (r"\\unreachable\share\comp_agent.env",)
+    )
+    monkeypatch.setattr(
+        config, "_read_file_with_timeout", lambda path, timeout: (None, "unreachable")
+    )
+
+    report = ui._preflight_report()
+
+    assert report["ok"] is False
+    assert report["share_reachable"] is False
+    assert report["friendly_error"]["headline"] == "Can't Reach the Shared Key Config"
+
+
+def test_preflight_openai_unreachable_shows_network_banner(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    monkeypatch.setattr(ui, "_openai_reachable", lambda *args, **kwargs: False)
+
+    report = ui._preflight_report()
+
+    assert report["openai_key_present"] is True
+    assert report["openai_reachable"] is False
+    assert report["ok"] is False
+    friendly = report["friendly_error"]
+    assert friendly["headline"] == "Can't Reach OpenAI"
+    assert SECRET not in json.dumps(report)
+
+
+def test_preflight_does_not_mutate_environment(monkeypatch, tmp_path):
+    """A page-load preflight must never write env vars into an in-flight job."""
+    cfg = tmp_path / "office.json"
+    cfg.write_text(
+        json.dumps({"OPENAI_API_KEY": SECRET, "COMP_AGENT_LIVE_SEARCH": "1"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COMP_AGENT_CONFIG", str(cfg))
+    monkeypatch.delenv("COMP_AGENT_LIVE_SEARCH", raising=False)
+
+    report = ui._preflight_report()
+
+    # The report sees the key, but the process env stays untouched.
+    assert report["openai_key_present"] is True
+    assert "OPENAI_API_KEY" not in os.environ
+    assert "COMP_AGENT_LIVE_SEARCH" not in os.environ
+
+
+def test_classify_output_folder_errors():
+    friendly = ui._classify_error("ValueError: Output folder must be an absolute path. Got: projects_ui")
+    assert friendly["headline"] == "Output Folder Problem"
+    friendly = ui._classify_error("ValueError: Output folder is required. Pick a destination folder before running.")
+    assert friendly["headline"] == "Output Folder Problem"
 
 
 def test_key_source_derivation_from_report_shapes():

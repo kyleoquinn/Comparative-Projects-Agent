@@ -58,7 +58,7 @@ launcher. Layered precedence, **first hit wins per key**:
    `comp_agent.env`, next to the app: the executable directory when frozen
    under PyInstaller, otherwise the current working directory.
 4. **Shared office default (UNC path)** —
-   `\\datafiles\28_AI\_AI AGENTS\CompAgent\comp_agent.config.json`, then
+   `\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\comp_agent.config.json`, then
    `comp_agent.env` beside it. Always the UNC form, never the `X:` drive
    letter. Network reads run with a 2.5-second timeout so an unreachable
    share can never hang startup (on timeout the layer is abandoned and

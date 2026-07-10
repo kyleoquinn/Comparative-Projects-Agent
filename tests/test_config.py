@@ -290,3 +290,76 @@ def test_cli_load_dotenv_shim_respects_existing_env(monkeypatch, tmp_path):
 
 def test_cli_load_dotenv_shim_missing_file_is_noop(tmp_path):
     cli.load_dotenv(tmp_path / "does-not-exist.env")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Fast network failures (off-VPN) and read-only resolution — review fixes
+# ---------------------------------------------------------------------------
+
+def test_fast_network_failure_marks_share_unreachable(monkeypatch):
+    """Off-VPN DNS failures fail FAST (no timeout) but must still report the
+    share as unreachable so the UI shows the check-your-VPN message."""
+    monkeypatch.setattr(
+        config,
+        "SHARED_CONFIG_FILES",
+        (r"\no-such-host\share\a.json", r"\no-such-host\share\a.env"),
+    )
+    monkeypatch.setattr(
+        config, "_read_file_with_timeout", lambda path, timeout: (None, "unreachable")
+    )
+
+    report = config.resolve_config()
+
+    assert report["share_reachable"] is False
+    shared = _layers(report, "shared")
+    assert shared[0]["status"] == "unreachable"
+    assert shared[1]["status"] == "skipped"
+    assert shared[1]["reason"] == "share unreachable"
+
+
+def test_missing_or_unreachable_classifies_windows_network_errors(monkeypatch, tmp_path):
+    # A plain missing local file is "missing", not a network problem.
+    assert config._missing_or_unreachable(tmp_path / "not-here.json") == "missing"
+
+    # Windows network-layer errors (e.g. winerror 53, network path not found)
+    # mean the host/share could not be reached at all.
+    def raising_stat(path, *args, **kwargs):
+        raise OSError(2, "The network path was not found", None, 53)
+
+    monkeypatch.setattr(config.os, "stat", raising_stat)
+    assert config._missing_or_unreachable(r"\dead-host\share\x.json") == "unreachable"
+
+
+def test_apply_false_reports_without_mutating_env(monkeypatch, tmp_path):
+    """Preflight mode: same report, zero writes into os.environ."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = tmp_path / "office.json"
+    cfg.write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-test-never-applied", "COMP_TEST_RO": "1"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COMP_AGENT_CONFIG", str(cfg))
+
+    report = config.resolve_config(apply=False)
+
+    assert "OPENAI_API_KEY" not in os.environ
+    assert "COMP_TEST_RO" not in os.environ
+    assert report["openai_key_present"] is True
+    explicit = _layers(report, "explicit")[0]
+    assert "OPENAI_API_KEY" in explicit["keys_set"]
+
+
+def test_apply_false_precedence_matches_applying_run(monkeypatch, tmp_path):
+    """A later layer must see keys a earlier layer *would* have set."""
+    monkeypatch.delenv("COMP_TEST_SAME", raising=False)
+    cfg = tmp_path / "explicit.env"
+    cfg.write_text("COMP_TEST_SAME=from-explicit\n", encoding="utf-8")
+    dotenv = tmp_path / "fallback.env"
+    dotenv.write_text("COMP_TEST_SAME=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setenv("COMP_AGENT_CONFIG", str(cfg))
+
+    report = config.resolve_config(dotenv_path=dotenv, apply=False)
+
+    assert "COMP_TEST_SAME" not in os.environ
+    assert "COMP_TEST_SAME" in _layers(report, "explicit")[0]["keys_set"]
+    assert "COMP_TEST_SAME" in _layers(report, "dotenv")[0]["keys_already_in_env"]

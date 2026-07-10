@@ -50,12 +50,23 @@ def test_server_starts_and_serves_index(tmp_path) -> None:
     thread = app.start_server_thread(app.DEFAULT_HOST, port, output_root=str(tmp_path / "projects_ui"))
     assert app.wait_until_serving(app.DEFAULT_HOST, port, timeout=10.0)
 
-    with urllib.request.urlopen(f"http://{app.DEFAULT_HOST}:{port}/", timeout=5) as response:
+    # Loopback via a proxy-bypassing opener — a corporate registry proxy that
+    # doesn't bypass 127.0.0.1 must not make this test (or the app) fail.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://{app.DEFAULT_HOST}:{port}/", timeout=5) as response:
         assert response.status == 200
         body = response.read().decode("utf-8")
     assert "Comp Study Deck Builder" in body
+
+    # A second launch must detect this instance instead of racing for a port.
+    assert app.find_running_instance(app.DEFAULT_HOST, port) is True
 
     # Shutdown model: the server runs on a daemon thread, so it dies with the
     # process — the launcher's Ctrl+C / close-the-window behavior.
     assert thread.daemon
     assert thread.is_alive()
+
+
+def test_find_running_instance_false_when_nothing_is_listening() -> None:
+    port = app.pick_port(preferred=0)  # free port, nothing bound to it
+    assert app.find_running_instance(app.DEFAULT_HOST, port) is False

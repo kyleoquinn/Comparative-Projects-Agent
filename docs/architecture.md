@@ -14,7 +14,7 @@ Architect
   -> launcher (comp_agent/app.py)
        -> layered config resolution (comp_agent/config.py):
           process env -> COMP_AGENT_CONFIG file -> app-adjacent config
-          -> shared UNC config (\\datafiles\28_AI\_AI AGENTS\CompAgent\)
+          -> shared UNC config (\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\)
           -> repo-local .env (dev fallback)
        -> local server on 127.0.0.1 (stdlib ThreadingHTTPServer, free-port fallback)
        -> default browser opens the built-in single-page UI

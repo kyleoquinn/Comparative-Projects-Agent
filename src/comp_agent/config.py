@@ -11,7 +11,7 @@ Precedence, FIRST HIT WINS per key:
    PyInstaller, otherwise the current working directory. Looks for
    ``comp_agent.config.json`` then ``comp_agent.env``.
 4. The shared network default on the office share (UNC path, not the ``X:``
-   drive letter): ``\\\\datafiles\\28_AI\\_AI AGENTS\\CompAgent\\`` —
+   drive letter): ``\\\\datafiles\\reference\\28_AI\\_AI AGENTS\\CompAgent\\`` —
    ``comp_agent.config.json`` then ``comp_agent.env``. Probed with a short
    timeout so an unreachable share can never hang startup.
 5. The repo-local ``.env`` (the existing dev fallback).
@@ -41,7 +41,7 @@ LOCAL_CONFIG_FILENAMES = ("comp_agent.config.json", "comp_agent.env")
 
 # Shared office default. Use the UNC form, NOT the X: drive-letter mapping —
 # drive letters differ per user/machine; the UNC path is the same for everyone.
-SHARED_CONFIG_DIR = r"\\datafiles\28_AI\_AI AGENTS\CompAgent"
+SHARED_CONFIG_DIR = r"\\datafiles\reference\28_AI\_AI AGENTS\CompAgent"
 SHARED_CONFIG_FILES = (
     SHARED_CONFIG_DIR + r"\comp_agent.config.json",
     SHARED_CONFIG_DIR + r"\comp_agent.env",
@@ -146,38 +146,87 @@ def _read_file(path: str | Path) -> str | None:
         return None
 
 
-def _read_file_with_timeout(path: str | Path, timeout: float) -> tuple[str | None, bool]:
-    """Read a possibly-network path in a daemon thread; returns ``(text, timed_out)``.
+# Windows network-layer error codes that mean the HOST or SHARE could not be
+# reached (unresolvable name, dead server, network path not found) — as
+# opposed to "the share answered but the file isn't there". An unreachable
+# host often fails FAST (DNS failure) rather than hanging, so timeout alone
+# does not detect the off-VPN case.
+_NETWORK_ERROR_WINERRORS = frozenset({53, 59, 64, 65, 67, 121, 1203, 1231, 1232})
 
-    On timeout the daemon thread is abandoned (it cannot keep the process
-    alive) and the layer is skipped, so an unreachable UNC share cannot hang
-    startup.
+
+def _missing_or_unreachable(path: str | Path) -> str:
+    """Classify a failed read: ``"missing"`` (path answered, no file) vs
+    ``"unreachable"`` (network host/share could not be reached). Never raises."""
+    try:
+        os.stat(path)
+        return "missing"  # exists but was unreadable / not a regular file
+    except OSError as error:
+        if getattr(error, "winerror", None) in _NETWORK_ERROR_WINERRORS:
+            return "unreachable"
+        return "missing"
+    except Exception:  # pragma: no cover - absolute never-raise guarantee
+        return "missing"
+
+
+def _read_file_ex(path: str | Path) -> tuple[str | None, str]:
+    """Read a config file, returning ``(text, status)``.
+
+    ``status`` is ``"ok"``, ``"missing"``, or ``"unreachable"``. Goes through
+    :func:`_read_file` first so tests that patch it keep working.
     """
-    result: list[str | None] = [None]
+    text = _read_file(path)
+    if text is not None:
+        return text, "ok"
+    return None, _missing_or_unreachable(path)
+
+
+def _read_file_with_timeout(path: str | Path, timeout: float) -> tuple[str | None, str]:
+    """Read a possibly-network path in a daemon thread; returns ``(text, status)``.
+
+    ``status`` is ``"ok"``, ``"missing"``, ``"unreachable"`` (fast network
+    failure, e.g. off-VPN DNS error), or ``"timeout"`` (probe abandoned). On
+    timeout the daemon thread is abandoned (it cannot keep the process alive)
+    and the layer is skipped, so an unreachable UNC share cannot hang startup.
+    """
+    result: list[tuple[str | None, str]] = [(None, "missing")]
 
     def _target() -> None:
-        result[0] = _read_file(path)
+        result[0] = _read_file_ex(path)
 
     worker = threading.Thread(target=_target, daemon=True, name="comp-agent-config-probe")
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
-        return None, True
-    return result[0], False
+        return None, "timeout"
+    return result[0]
 
 
-def _apply_values(values: dict[str, str]) -> tuple[list[str], list[str]]:
+def _apply_values(
+    values: dict[str, str],
+    *,
+    apply: bool = True,
+    virtual: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
     """Write values into ``os.environ`` for keys not already set.
 
     Returns ``(keys_set, keys_already_in_env)`` — key NAMES only, never values.
+
+    With ``apply=False`` nothing is written; ``virtual`` tracks keys earlier
+    layers *would* have set so the report is identical to an applying run.
+    Read-only mode exists for the UI preflight, which must never mutate the
+    process env of in-flight jobs (e.g. re-enabling COMP_AGENT_LIVE_SEARCH
+    mid-run after the user disabled it).
     """
     keys_set: list[str] = []
     keys_already: list[str] = []
     for key, value in values.items():
-        if key in os.environ:
+        if key in os.environ or (virtual is not None and key in virtual):
             keys_already.append(key)
             continue
-        os.environ[key] = value
+        if apply:
+            os.environ[key] = value
+        elif virtual is not None:
+            virtual.add(key)
         keys_set.append(key)
     return keys_set, keys_already
 
@@ -188,16 +237,18 @@ def _load_layer(
     source: str | Path,
     *,
     timeout: float | None = None,
+    apply: bool = True,
+    virtual: set[str] | None = None,
 ) -> dict:
     """Load one config file layer, apply it, and append a report entry."""
     entry: dict[str, object] = {"layer": layer, "source": str(source)}
     if timeout is None:
         text = _read_file(source)
-        timed_out = False
+        status = "ok" if text is not None else "missing"
     else:
-        text, timed_out = _read_file_with_timeout(source, timeout)
-    if timed_out:
-        entry["status"] = "timeout"
+        text, status = _read_file_with_timeout(source, timeout)
+    if status in ("timeout", "unreachable"):
+        entry["status"] = status
     elif text is None:
         entry["status"] = "missing"
     else:
@@ -206,7 +257,7 @@ def _load_layer(
         except ValueError:
             entry["status"] = "parse-error"
         else:
-            keys_set, keys_already = _apply_values(values)
+            keys_set, keys_already = _apply_values(values, apply=apply, virtual=virtual)
             entry["status"] = "loaded"
             entry["format"] = fmt
             entry["keys_set"] = keys_set
@@ -223,12 +274,16 @@ def _app_dir() -> Path:
     return Path.cwd()
 
 
-def resolve_config(dotenv_path: str | Path = ".env") -> dict:
+def resolve_config(dotenv_path: str | Path = ".env", *, apply: bool = True) -> dict:
     """Resolve layered config into ``os.environ`` and describe what happened.
 
     Existing process env vars always win — values are only written for keys
     not already set. Safe to call more than once (idempotent). Never raises
     on missing, malformed, or unreachable config paths.
+
+    With ``apply=False`` the same resolution and report are computed but
+    ``os.environ`` is never touched — used by the UI preflight so a page load
+    can never mutate the environment of an in-flight job.
 
     Returns a report dict that is safe to surface in the UI preflight — it
     contains layer/source/status info and the NAMES of keys set, never secret
@@ -238,17 +293,23 @@ def resolve_config(dotenv_path: str | Path = ".env") -> dict:
             "layers": [{"layer", "source", "status", ...}, ...],
             "keys_set": [...],          # all key names newly set this call
             "share_reachable": bool | None,  # None when the share layer was
-                                             # skipped or not configured
-            "openai_key_present": bool,  # OPENAI_API_KEY now in os.environ
+                                             # skipped or not configured;
+                                             # False on timeout OR fast
+                                             # network failure (off-VPN)
+            "openai_key_present": bool,  # OPENAI_API_KEY in env (or would be)
         }
     """
     report: dict[str, object] = {"layers": [], "keys_set": [], "share_reachable": None}
+    virtual: set[str] | None = None if apply else set()
 
     # Layer 2: explicit config file via COMP_AGENT_CONFIG.
     explicit = (os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
     if explicit:
         # The explicit path may itself be a UNC path, so guard it too.
-        _load_layer(report, "explicit", explicit, timeout=NETWORK_PROBE_TIMEOUT_SECONDS)
+        _load_layer(
+            report, "explicit", explicit,
+            timeout=NETWORK_PROBE_TIMEOUT_SECONDS, apply=apply, virtual=virtual,
+        )
     else:
         report["layers"].append(
             {
@@ -262,7 +323,7 @@ def resolve_config(dotenv_path: str | Path = ".env") -> dict:
     # Layer 3: config files next to the app (exe dir when frozen, else CWD).
     app_dir = _app_dir()
     for name in LOCAL_CONFIG_FILENAMES:
-        _load_layer(report, "app_dir", app_dir / name)
+        _load_layer(report, "app_dir", app_dir / name, apply=apply, virtual=virtual)
 
     # Layer 4: shared network default — replaced entirely by COMP_AGENT_CONFIG.
     if explicit:
@@ -280,17 +341,25 @@ def resolve_config(dotenv_path: str | Path = ".env") -> dict:
         shared_files = list(SHARED_CONFIG_FILES)
         for position, source in enumerate(shared_files):
             entry = _load_layer(
-                report, "shared", source, timeout=NETWORK_PROBE_TIMEOUT_SECONDS
+                report, "shared", source,
+                timeout=NETWORK_PROBE_TIMEOUT_SECONDS, apply=apply, virtual=virtual,
             )
-            if entry["status"] == "timeout":
+            if entry["status"] in ("timeout", "unreachable"):
+                # Both a hung probe and a fast network failure (the common
+                # off-VPN DNS case) mean the share cannot be reached.
                 share_reachable = False
+                reason = (
+                    "share probe timed out"
+                    if entry["status"] == "timeout"
+                    else "share unreachable"
+                )
                 for remaining in shared_files[position + 1 :]:
                     report["layers"].append(
                         {
                             "layer": "shared",
                             "source": str(remaining),
                             "status": "skipped",
-                            "reason": "share probe timed out",
+                            "reason": reason,
                         }
                     )
                 break
@@ -298,9 +367,11 @@ def resolve_config(dotenv_path: str | Path = ".env") -> dict:
         report["share_reachable"] = share_reachable
 
     # Layer 5: repo-local .env (dev fallback; original load_dotenv behavior).
-    _load_layer(report, "dotenv", dotenv_path)
+    _load_layer(report, "dotenv", dotenv_path, apply=apply, virtual=virtual)
 
-    report["openai_key_present"] = "OPENAI_API_KEY" in os.environ
+    report["openai_key_present"] = "OPENAI_API_KEY" in os.environ or (
+        virtual is not None and "OPENAI_API_KEY" in virtual
+    )
     return report
 
 

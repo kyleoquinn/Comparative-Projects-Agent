@@ -71,11 +71,26 @@ def _handler_for(default_output_root: str):
 
         def _handle_discover(self, default_output_root: str) -> None:
             payload = self._read_json()
-            self._send_json(_run_discover(payload, default_output_root))
+            try:
+                self._send_json(_run_discover(payload, default_output_root))
+            except Exception as error:
+                # Validation errors (e.g. missing output folder) must come
+                # back as JSON, not a dropped connection.
+                self._send_json(self._error_payload(error), status=400)
 
         def _handle_approve(self, default_output_root: str) -> None:
             payload = self._read_json()
-            self._send_json(_run_approve(payload, default_output_root))
+            try:
+                self._send_json(_run_approve(payload, default_output_root))
+            except Exception as error:
+                self._send_json(self._error_payload(error), status=400)
+
+        @staticmethod
+        def _error_payload(error: Exception) -> dict[str, Any]:
+            return {
+                "error": str(error),
+                "friendly_error": _classify_error(f"{type(error).__name__}: {error}"),
+            }
 
         def _start_job(self, kind: str, default_output_root: str) -> None:
             payload = self._read_json()
@@ -429,12 +444,23 @@ def _load_settings() -> dict[str, Any]:
         return {}
 
 
+_SETTINGS_LOCK = threading.Lock()
+
+
 def _save_settings(payload: Any) -> dict[str, Any]:
-    """Merge sanitized settings over existing ones and persist to disk."""
-    settings = {**_load_settings(), **_sanitize_settings(payload)}
-    path = _settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    """Merge sanitized settings over existing ones and persist to disk.
+
+    Serialized under a lock (the server is threaded) and written via a temp
+    file + atomic ``os.replace`` so a mid-write kill or concurrent saves can
+    never leave a truncated settings.json behind.
+    """
+    with _SETTINGS_LOCK:
+        settings = {**_load_settings(), **_sanitize_settings(payload)}
+        path = _settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
     return settings
 
 
@@ -459,17 +485,42 @@ def _key_source_from_report(report: dict[str, Any]) -> str | None:
     return None
 
 
+def _openai_reachable(timeout: float = 3.0) -> bool:
+    """Best-effort check that this machine can reach the OpenAI API at all.
+
+    Sends an UNAUTHENTICATED request — the key never leaves the process. Any
+    HTTP response (including the expected 401) proves reachability; only a
+    transport-level failure (DNS, firewall, proxy block) counts as
+    unreachable. Uses the default opener so it exercises the same
+    proxy-honoring network path the real job-time OpenAI calls take.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        request = urllib.request.Request("https://api.openai.com/v1/models", method="GET")
+        with urllib.request.urlopen(request, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True  # the API answered (401 without auth) — network path works
+    except Exception:
+        return False
+
+
 def _preflight_report() -> dict[str, Any]:
     """Secrets-free startup health check for the UI.
 
-    Re-runs layered config resolution (idempotent; env always wins) and maps
-    the two common first-run failures to the existing friendly-error copy.
-    Key VALUES never appear in this payload — the WS-1 report carries key
-    names and source paths only.
+    Re-runs layered config resolution in READ-ONLY mode (``apply=False``) so
+    a page load can never mutate the process env of an in-flight job (e.g.
+    re-enabling COMP_AGENT_LIVE_SEARCH after a run disabled it), then maps
+    the common first-run failures to the existing friendly-error copy. Key
+    VALUES never appear in this payload — the WS-1 report carries key names
+    and source paths only.
     """
-    report = resolve_config()
+    report = resolve_config(apply=False)
     key_present = bool(report.get("openai_key_present"))
     share_reachable = report.get("share_reachable")
+    openai_reachable: bool | None = _openai_reachable() if key_present else None
     friendly: dict[str, str] | None = None
     if not key_present:
         if share_reachable is False:
@@ -480,9 +531,14 @@ def _preflight_report() -> dict[str, Any]:
             friendly = _classify_error(
                 "No OpenAI key found in any config location (environment, config files, shared drive, .env)."
             )
+    elif openai_reachable is False:
+        friendly = _classify_error(
+            "OpenAI unreachable: could not reach api.openai.com from this machine."
+        )
     return {
-        "ok": key_present,
+        "ok": key_present and openai_reachable is not False,
         "openai_key_present": key_present,
+        "openai_reachable": openai_reachable,
         "key_source": _key_source_from_report(report),
         "share_reachable": share_reachable,
         "default_output_root": _default_output_root(),
@@ -734,6 +790,18 @@ def _classify_error(text: str) -> dict[str, str]:
         return {
             "headline": "No OpenAI Key Found",
             "detail": "The app couldn't find an OpenAI key in any config location, so live search can't run. Contact your Comp Agent admin.",
+        }
+    if "openai unreachable" in t or ("api.openai.com" in t and ("could not reach" in t or "unreachable" in t or "blocked" in t)):
+        return {
+            "headline": "Can't Reach OpenAI",
+            "detail": "This machine couldn't reach api.openai.com — the office network, a firewall, or a proxy may be blocking it. Live search won't work until it's reachable. Contact IT if this persists.",
+        }
+
+    # Output folder validation (raised before any pipeline work starts).
+    if "output folder" in t:
+        return {
+            "headline": "Output Folder Problem",
+            "detail": "The output folder must be a full absolute path (for example C:\\Users\\you\\Documents\\Comp Packages). Pick the folder again with Browse and re-run.",
         }
 
     # OpenAI / live search
@@ -1483,7 +1551,10 @@ INDEX_HTML = r"""<!doctype html>
         document.getElementById('output_root').focus();
         return false;
       }
-      const isAbsolute = /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\') || raw.startsWith('/');
+      // Windows product: drive-letter or UNC paths only. A bare '/x' path
+      // passes Path.is_absolute() on POSIX but NOT on Windows, so accepting
+      // it client-side would let the job start and then fail server-side.
+      const isAbsolute = /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\');
       if (!isAbsolute) {
         statusEl.textContent = 'Output folder must be an absolute path (e.g., C:\\Comp Outputs).';
         document.getElementById('output_root').focus();

@@ -81,21 +81,56 @@ def start_server_thread(host: str, port: int, output_root: str = DEFAULT_OUTPUT_
     return thread
 
 
+def _local_opener():
+    """URL opener that BYPASSES any system/corporate proxy.
+
+    On Windows, ``urlopen``'s default opener honors the registry/env proxy,
+    and the common ``<local>`` bypass rule does NOT match ``127.0.0.1`` (it
+    only matches hostnames without dots). Probing our own loopback through a
+    corporate proxy fails, which would make a perfectly healthy server look
+    dead. Loopback probes must never leave the machine.
+    """
+    from urllib.request import ProxyHandler, build_opener
+
+    return build_opener(ProxyHandler({}))
+
+
 def wait_until_serving(host: str, port: int, timeout: float = 15.0) -> bool:
     """Poll ``http://host:port/`` until it answers 200, or the timeout passes."""
-    from urllib.request import urlopen
-
+    opener = _local_opener()
     url = f"http://{host}:{port}/"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urlopen(url, timeout=1.0) as response:
+            with opener.open(url, timeout=1.0) as response:
                 if response.status == 200:
                     return True
         except OSError:
             pass
         time.sleep(0.1)
     return False
+
+
+def find_running_instance(host: str, port: int) -> bool:
+    """Return True when a Comp Agent instance is already serving ``port``.
+
+    Used to make an impatient double-click benign: instead of silently racing
+    for the port (Windows SO_REUSEADDR would let two servers bind it) or
+    confusingly falling back to a second instance on another port, the second
+    launch just re-opens the browser at the existing instance.
+    """
+    try:
+        with _local_opener().open(f"http://{host}:{port}/", timeout=1.0) as response:
+            if response.status != 200:
+                return False
+            # The UI page title is our identity marker: cheap (no config or
+            # network probes server-side) and only served by this app. If the
+            # title ever changes, detection degrades benignly to the
+            # free-port fallback.
+            body = response.read(65536).decode("utf-8", errors="replace")
+            return "Comp Study Deck Builder" in body
+    except Exception:
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +153,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"Comp Agent {get_version()} — starting up...")
+
+    # Someone double-clicked the shortcut while Comp Agent is already running:
+    # don't start a second server, just bring the existing UI back up.
+    if find_running_instance(DEFAULT_HOST, args.port):
+        existing_url = f"http://{DEFAULT_HOST}:{args.port}/"
+        print(f"Comp Agent is already running at {existing_url} — opening it in your browser.")
+        if not args.no_browser:
+            webbrowser.open(existing_url)
+        return 0
 
     # Layered config resolution (WS-1): process env wins, then COMP_AGENT_CONFIG,
     # app-adjacent files, the shared network config, and the repo-local .env.

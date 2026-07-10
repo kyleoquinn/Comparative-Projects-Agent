@@ -49,6 +49,6 @@ This repo is **not** a hosted service, an orchestrator, or a general-purpose fra
 ## Environment notes
 
 - Python 3.10+, Windows + bash via Claude Code (use forward slashes).
-- Config/secrets resolve through the layered lookup in `src/comp_agent/config.py`: process env → `COMP_AGENT_CONFIG` file → app-adjacent `comp_agent.config.json`/`comp_agent.env` → shared UNC config (`\\datafiles\28_AI\_AI AGENTS\CompAgent\`, timeout-guarded) → repo-local `.env`. For dev, `OPENAI_API_KEY` in `.env` still works (see `.env.example`). Live search is optional — code falls back to placeholders when absent. Never log or print the key.
+- Config/secrets resolve through the layered lookup in `src/comp_agent/config.py`: process env → `COMP_AGENT_CONFIG` file → app-adjacent `comp_agent.config.json`/`comp_agent.env` → shared UNC config (`\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\`, timeout-guarded) → repo-local `.env`. For dev, `OPENAI_API_KEY` in `.env` still works (see `.env.example`). Live search is optional — code falls back to placeholders when absent. Never log or print the key.
 - Tests run with `pytest`; do not skip or `xfail` to make a change land.
 - Desktop packaging: `pip install -e .[packaging]`, then build `packaging/comp_agent.spec` per `packaging/DEPLOY.md`. Onedir, not onefile.

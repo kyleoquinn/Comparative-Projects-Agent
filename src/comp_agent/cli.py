@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shlex
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from comp_agent.config import load_config
 from comp_agent.models import ProjectBrief
 from comp_agent.pipeline import CompPackagePipeline
 from comp_agent.stages import CompAppStages
@@ -40,28 +39,13 @@ EXAMPLE_BRIEF = ProjectBrief(
 
 
 def load_dotenv(path: str | Path = ".env") -> None:
-    env_path = Path(path)
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        value = value.strip()
-        if value:
-            try:
-                parts = shlex.split(value, posix=False)
-            except ValueError:
-                parts = []
-            if len(parts) == 1:
-                value = parts[0].strip("\"'")
-            else:
-                value = value.strip("\"'")
-        os.environ[key] = value
+    """Backwards-compatible shim; resolution lives in ``comp_agent.config``.
+
+    Runs the full layered lookup (process env vars win, then
+    ``COMP_AGENT_CONFIG``, app-adjacent config files, the shared network
+    default, and finally ``path`` as the repo-local ``.env`` dev fallback).
+    """
+    load_config(dotenv_path=path)
 
 
 def build_parser() -> argparse.ArgumentParser:

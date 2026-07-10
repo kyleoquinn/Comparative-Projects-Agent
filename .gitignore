@@ -6,6 +6,8 @@ __pycache__/
 dist/
 build/
 .env
+comp_agent.config.json
+comp_agent.env
 projects/
 projects_ui/
 projects_*_server*.log

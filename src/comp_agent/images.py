@@ -406,8 +406,9 @@ def _download_page(url: str) -> str:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "CompAgent/0.1 image discovery",
+            "User-Agent": _BROWSER_UA,
             "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
         },
     )
     try:
@@ -440,14 +441,31 @@ def _image_url_rank(url: str) -> int:
     return score
 
 
+# A realistic browser User-Agent. Many image hosts / CDNs return 403 or block
+# non-browser clients, which is the most common cause of "Image Download Failed".
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+def _image_request_headers(url: str) -> dict[str, str]:
+    """Browser-like headers for image fetches (raises host block/hotlink rate)."""
+    headers = {
+        "User-Agent": _BROWSER_UA,
+        "Accept": "image/avif,image/webp,image/apng,image/png,image/jpeg,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        # Many hosts block hotlinking without a Referer; the image's own origin
+        # is the most broadly-accepted value.
+        headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+    return headers
+
+
 def _download_image(url: str, base_path: Path) -> Path:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "CompAgent/0.1 image downloader",
-            "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8",
-        },
-    )
+    request = urllib.request.Request(url, headers=_image_request_headers(url))
     try:
         with urllib.request.urlopen(request, timeout=25) as response:
             content_type = response.headers.get("Content-Type", "").split(";")[0].lower()

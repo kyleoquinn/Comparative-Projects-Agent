@@ -37,6 +37,9 @@ def _handler_for(default_output_root: str):
             if self.path in {"/", "/index.html"}:
                 self._send_html(INDEX_HTML)
                 return
+            if self.path == "/favicon.ico":
+                self._send_favicon()
+                return
             if self.path == "/api/preflight":
                 self._send_json(_preflight_report())
                 return
@@ -140,6 +143,23 @@ def _handler_for(default_output_root: str):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_favicon(self) -> None:
+            # Small branded SVG so browsers (and web-shield extensions) get a
+            # 200 for /favicon.ico instead of a 404 that clutters the console.
+            svg = (
+                "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+                "<rect width='32' height='32' rx='7' fill='#2f6f64'/>"
+                "<text x='16' y='21' font-family='Arial,sans-serif' font-size='9' "
+                "font-weight='bold' fill='#ffffff' text-anchor='middle'>PC&amp;P</text>"
+                "</svg>"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(svg)))
+            self.send_header("Cache-Control", "max-age=86400")
+            self.end_headers()
+            self.wfile.write(svg)
 
         def _send_html(self, html: str) -> None:
             body = html.encode("utf-8")
@@ -913,6 +933,7 @@ INDEX_HTML = r"""<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Comparative Projects Deck Generator</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico">
   <style>
     :root {
       --bg: #f5f4ef;

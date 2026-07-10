@@ -1,12 +1,21 @@
 # Comp Agent API Contract
 
-This repo is the backend service for the Comparative Projects / Comp Study Deck agent.
+Comp Agent is a standalone tool. In the current phase it ships as an internal
+desktop app: the packaged launcher starts a local HTTP server on `127.0.0.1`
+and the built-in browser UI is the client. The endpoints below are that local
+API. They are also the seam a future hosted web service will reuse, so treat
+the shapes as stable: extend additively, never rename endpoints or JSON
+fields.
 
-The frontend should treat the comp agent as a hosted backend service. The frontend collects inputs, starts jobs, polls progress, handles comp approval, and shows output links. The comp agent owns discovery, OpenAI web search, enrichment, repair, image collection, PPTX generation, and JSON artifacts.
+The client (today the built-in UI; later a web client) collects inputs, starts
+jobs, polls progress, handles comp approval, and shows output links. The comp
+agent owns discovery, OpenAI web search, enrichment, repair, image collection,
+PPTX generation, and JSON artifacts.
 
-## Current Local Development API
+## Current Local API
 
-The current development server is started with:
+The local server is started by the desktop launcher (`comp-agent-app` /
+`python -m comp_agent.app`, with automatic free-port fallback) or directly:
 
 ```powershell
 python -m comp_agent.cli ui --host 127.0.0.1 --port 8765 --output-root projects_ui
@@ -17,6 +26,100 @@ Base URL:
 ```text
 http://127.0.0.1:8765
 ```
+
+### Preflight Check
+
+```http
+GET /api/preflight
+```
+
+Secrets-free startup health check. The UI calls it on load and renders
+`friendly_error` (when present) as a banner. Key VALUES never appear in this
+payload — only key names and source paths.
+
+```json
+{
+  "ok": true,
+  "openai_key_present": true,
+  "key_source": "shared",
+  "share_reachable": true,
+  "default_output_root": "C:\\Users\\name\\Documents\\Comp Packages",
+  "layers": [
+    {
+      "layer": "shared",
+      "source": "\\\\datafiles\\28_AI\\_AI AGENTS\\CompAgent\\comp_agent.config.json",
+      "status": "loaded",
+      "format": "json",
+      "keys_set": ["OPENAI_API_KEY"],
+      "keys_already_in_env": []
+    }
+  ],
+  "friendly_error": null
+}
+```
+
+- `ok` / `openai_key_present` — whether `OPENAI_API_KEY` resolved.
+- `key_source` — best-effort name of the config layer that supplied the key:
+  `"env"`, `"explicit"`, `"app_dir"`, `"shared"`, `"dotenv"`, or `null`.
+- `share_reachable` — `true`/`false`, or `null` when the shared layer was not
+  probed (e.g. skipped because `COMP_AGENT_CONFIG` overrides it).
+- `layers` — the per-layer resolution report from `comp_agent.config`
+  (`status` is `loaded` | `missing` | `timeout` | `parse-error` | `skipped`).
+- `friendly_error` — `null` when healthy; otherwise
+  `{"headline": "...", "detail": "..."}` with non-technical copy
+  ("Can't Reach the Shared Key Config" for VPN/share problems,
+  "No OpenAI Key Found" when no layer carries the key).
+
+### Per-User Settings
+
+```http
+GET /api/settings
+```
+
+```json
+{
+  "settings": {
+    "output_root": "D:\\Comp Packages",
+    "live_search": true
+  },
+  "path": "C:\\Users\\name\\AppData\\Local\\CompAgent\\settings.json"
+}
+```
+
+`settings` may be `{}` or omit either key when nothing has been saved yet;
+corrupt or missing settings files silently yield `{}`.
+
+```http
+POST /api/settings
+Content-Type: application/json
+```
+
+Request body (both keys optional; unknown keys and wrong types are dropped):
+
+```json
+{
+  "output_root": "D:\\Comp Packages",
+  "live_search": true
+}
+```
+
+Response (merge preserves previously saved keys not present in the request;
+write failures return `"ok": false` instead of an HTTP error):
+
+```json
+{
+  "ok": true,
+  "settings": {
+    "output_root": "D:\\Comp Packages",
+    "live_search": true
+  },
+  "path": "C:\\Users\\name\\AppData\\Local\\CompAgent\\settings.json"
+}
+```
+
+The UI uses these to pre-fill the output folder (saved value first, then the
+per-user Documents default from preflight) and to restore the live-search
+toggle.
 
 ### Start Candidate Discovery
 
@@ -98,7 +201,7 @@ Response when complete:
 
 ### Candidate Object
 
-The discovery result returns `candidates`. The frontend should render these for user approval.
+The discovery result returns `candidates`. The client renders these for user approval.
 
 ```json
 {
@@ -121,7 +224,7 @@ The discovery result returns `candidates`. The frontend should render these for 
 }
 ```
 
-Frontend approval should send selected `comp_id` values.
+Approval sends the selected `comp_id` values.
 
 ### Approve Candidates And Generate Deck
 
@@ -174,9 +277,9 @@ Important returned paths:
 }
 ```
 
-## Recommended Production API
+## Future Production API (hosted phase, not built)
 
-The current local UI endpoints are intentionally temporary. For production, the preferred connector shape is:
+The hosted web service is a deferred later phase. When it is built, the preferred connector shape is:
 
 ```http
 POST /jobs
@@ -185,7 +288,7 @@ POST /jobs/{job_id}/approve
 GET  /jobs/{job_id}/outputs
 ```
 
-The frontend can support many agents if each agent follows this pattern:
+A future web client can support many agents if each agent follows this pattern:
 
 ```ts
 type AgentConnector = {
@@ -213,7 +316,7 @@ export const compStudyAgent = {
 };
 ```
 
-## Frontend Responsibilities
+## Client Responsibilities (today: the built-in UI; later: a web client)
 
 - Collect project inputs.
 - Start discovery.

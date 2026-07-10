@@ -1,32 +1,58 @@
 # Architecture Notes
 
-The Comp Agent should be hosted as a backend service. The frontend does not need to run the research pipeline directly; it only needs to call the service and display progress/results.
+Comp Agent is a **standalone product**. The current phase is an internal
+desktop distribution: a packaged (PyInstaller onedir) app on the office share
+that each architect launches with one click. A **hosted web service is a later
+phase** — the seams (stage API, file-based artifacts, local HTTP endpoints)
+are kept stable so that hosted mode is additive, not a rewrite.
 
-## Recommended Repo Layout Across Products
-
-Use one repo per backend agent plus one frontend repo:
+## Current Runtime Model (internal desktop distribution)
 
 ```text
-frontend-ui/
-comp-agent/
-future-agent-a/
-future-agent-b/
+Architect
+  -> shortcut on X:\28_AI\_AI AGENTS (share holds the onedir app folder)
+  -> launcher (comp_agent/app.py)
+       -> layered config resolution (comp_agent/config.py):
+          process env -> COMP_AGENT_CONFIG file -> app-adjacent config
+          -> shared UNC config (\\datafiles\28_AI\_AI AGENTS\CompAgent\)
+          -> repo-local .env (dev fallback)
+       -> local server on 127.0.0.1 (stdlib ThreadingHTTPServer, free-port fallback)
+       -> default browser opens the built-in single-page UI
+  -> OpenAI API and public web sources (live search)
+  -> outputs written to the user-chosen folder (e.g. a mapped drive)
 ```
 
-This keeps each agent independently testable and deployable while allowing the frontend to present them as one product.
+Key properties of this model:
 
-## Runtime Model
+- **Not a shared server.** The app bytes live on the share, but the exe runs
+  in each user's own Windows session and binds `127.0.0.1` on *their* PC.
+  Multiple architects run concurrently with zero interaction.
+- **No secret in the install folder or binary.** The OpenAI key lives in one
+  shared config file on the office drive, referenced by UNC path (never the
+  `X:` drive letter, which varies per machine). Rotating the key means editing
+  that one file; every machine picks it up on next launch.
+- **Updating = replacing the app folder on the share.** No per-machine
+  reinstall.
+
+See `packaging/DEPLOY.md` for the build, share layout, and IT checklist.
+
+## Future Phase: Hosted Web Service (deferred, not built)
+
+Later, the same pipeline can be exposed as a hosted service that a web client
+calls over HTTP. Nothing in the current codebase should couple to
+single-user desktop assumptions in a way that blocks this (e.g. the shared
+config path lives in the config layer, not in stage logic). Building the
+hosted service — including auth or a database — is out of scope and needs
+explicit approval.
 
 ```text
 User
-  -> Frontend UI
-  -> Comp Agent API
+  -> Web client UI
+  -> Hosted Comp Agent API
   -> OpenAI API and public web sources
   -> Stored outputs
-  -> Frontend output links
+  -> Output links in the client
 ```
-
-The frontend and backend may live on the same server, but the cleanest integration is still an HTTP API. A web address gives each agent a stable interface, works locally and remotely, and lets future agents be added without coupling their Python internals to the UI codebase.
 
 ## Current Pipeline
 
@@ -42,11 +68,18 @@ Discovery
   -> PPTX generation
 ```
 
-Discovery is lightweight and meant to support candidate selection. Approved comps then receive the heavier evidence-building work before deck generation.
+Discovery is lightweight and meant to support candidate selection. Approved
+comps then receive the heavier evidence-building work before deck generation.
+All stage state is file-based under `projects/<slug>/` — see
+`docs/stage_contracts.md` (authoritative).
 
-## Connector Boundary
+## API Boundary
 
-The frontend owns:
+Today the "client" is the built-in browser UI served by `ui.py`; in the future
+hosted phase it would be a separate web client. Either way, the boundary is
+the same:
+
+The client side owns:
 
 - input forms
 - job creation calls
@@ -65,9 +98,21 @@ The Comp Agent owns:
 - PPTX generation
 - internal diligence notes
 
-## Production API Shape
+## Local Support Endpoints
 
-The recommended production contract is:
+Beyond the job lifecycle, the local UI server exposes support endpoints for
+the desktop experience (all additive; shapes in `docs/api_contract.md`):
+
+- `GET /api/preflight` — secrets-free startup health check: is the OpenAI key
+  resolved, which config layer supplied it, is the shared config reachable,
+  plus a friendly error object for the UI banner when something is wrong.
+- `GET /api/settings` / `POST /api/settings` — persist per-user preferences
+  (output folder, live-search toggle) in a local settings file so architects
+  don't re-enter them each run.
+
+## Future Production API Shape
+
+The recommended production contract for the hosted phase is:
 
 ```http
 POST /jobs
@@ -76,4 +121,5 @@ POST /jobs/{job_id}/approve
 GET  /jobs/{job_id}/outputs
 ```
 
-This allows every future agent to expose the same basic lifecycle while keeping agent-specific input schemas separate.
+This is the documented future shape only — it is intentionally not built in
+this phase.

@@ -1,18 +1,19 @@
 # Comp Agent
 
-Comp Agent is a modular backend agent for producing client-facing comparative project decks. It discovers candidate comps, asks for approval, builds evidence packages for approved comps, validates image packages, and generates a standardized PowerPoint deck plus supporting JSON artifacts.
+Comp Agent is a standalone tool for producing client-facing comparative project decks. It discovers candidate comps, asks for approval, builds evidence packages for approved comps, validates image packages, and generates a standardized PowerPoint deck plus supporting JSON artifacts.
 
-The intended product architecture is:
+The current distribution model is an **internal desktop app**: a packaged (PyInstaller onedir) build lives on the office share (`X:\28_AI\_AI AGENTS`), an architect double-clicks one shortcut, the launcher resolves the shared OpenAI key config over the network (UNC path), starts a local web server on `127.0.0.1`, and opens the browser to the built-in UI. Each user runs their own instance on their own machine — there is no hosted server.
 
 ```text
-Frontend UI
-  -> calls hosted Comp Agent API
-  -> user approves comps
-  -> Comp Agent runs research/deck pipeline
-  -> frontend displays progress and output links
+Architect clicks shortcut on the share
+  -> launcher resolves config/key (shared UNC config, layered lookup)
+  -> local server starts on 127.0.0.1 (free-port fallback)
+  -> browser opens the built-in UI
+  -> user fills the form, approves comps, picks an output folder
+  -> deck + JSON artifacts written to the chosen folder
 ```
 
-This repo should be treated as the reference implementation for the Comp Agent backend. A separate frontend repo can use the docs here to understand which inputs to collect, how to call the agent, what progress states to show, and where output artifacts are written.
+A **hosted web service is a planned later phase**, not part of this repo today. The stage API, file-based artifacts, and local HTTP endpoints are kept stable so that hosted mode is an additive future effort — see "Future Production API" below and `docs/architecture.md`.
 
 ## Current Capabilities
 
@@ -26,7 +27,30 @@ This repo should be treated as the reference implementation for the Comp Agent b
 - Standardized `Comparative Projects` PPTX deck.
 - JSON outputs for deck data, strategy, source metadata, diligence notes, audit results, and repair results.
 
-## Local Setup
+## Run As Desktop App
+
+The desktop launcher is the packaged entry point (and works from a dev checkout too):
+
+```powershell
+comp-agent-app            # or: python -m comp_agent.app
+```
+
+It resolves config/secrets via the layered lookup in `src/comp_agent/config.py` (process env → `COMP_AGENT_CONFIG` file → app-adjacent config → shared UNC config → repo `.env`), picks a port (8765 preferred, automatic free-port fallback), starts the local server, and opens the browser. Flags:
+
+```text
+--version       Print "Comp Agent <version>" and exit.
+--no-browser    Do not auto-open the browser (smoke tests, headless QA).
+--port          Preferred port (falls back to a free port if taken).
+--output-root   Default project workspace root (the UI still requires an explicit output folder).
+```
+
+To build and deploy the packaged app (PyInstaller onedir, share layout, shortcut, key-config setup, IT checklist), see [packaging/DEPLOY.md](packaging/DEPLOY.md). PyInstaller is an optional extra, not a core dependency:
+
+```powershell
+pip install -e .[packaging]
+```
+
+## Local Setup (development)
 
 ```powershell
 python -m venv .venv
@@ -35,14 +59,14 @@ pip install -e .[dev]
 Copy-Item .env.example .env
 ```
 
-Add your OpenAI API key to `.env`:
+Add your OpenAI API key to `.env` (the dev fallback — packaged installs read the shared config instead; see `docs/local_dev.md` for the full resolution order):
 
 ```text
 OPENAI_API_KEY=sk-...
 COMP_AGENT_LIVE_SEARCH=1
 ```
 
-Start the temporary local WebUI:
+Start the local WebUI directly (without the launcher):
 
 ```powershell
 python -m comp_agent.cli ui --host 127.0.0.1 --port 8765 --output-root projects_ui
@@ -54,31 +78,41 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-## Frontend Integration Docs
+## Documentation
 
-- [API contract](docs/api_contract.md)
+- [API contract](docs/api_contract.md) — the local HTTP API and the future hosted shape
 - [Comp agent input packet](docs/comp_agent_input_packet.md)
-- [Frontend inputs](docs/frontend_inputs.md)
+- [UI inputs](docs/frontend_inputs.md)
 - [Output contract](docs/output_contract.md)
-- [Local development](docs/local_dev.md)
+- [Local development](docs/local_dev.md) — setup, config resolution order, env vars
 - [Architecture notes](docs/architecture.md)
+- [Stage contracts](docs/stage_contracts.md) — authoritative stage/file contracts
+- [Build & deploy](packaging/DEPLOY.md) — packaged desktop distribution
 
-Example frontend payloads:
+Example request payloads:
 
 - [Discovery request](examples/frontend_discovery_request.json)
 - [Approval request](examples/frontend_approval_request.json)
 
-## Current Development API
+## Current Local API
 
-The temporary WebUI currently exposes:
+The built-in WebUI exposes:
 
 ```http
+GET  /api/preflight
+GET  /api/settings
+POST /api/settings
 POST /api/discover/start
 GET  /api/jobs/{job_id}
 POST /api/approve/start
+POST /api/select-output-folder
 ```
 
-For production, the recommended shape is:
+See [docs/api_contract.md](docs/api_contract.md) for request/response shapes.
+
+## Future Production API
+
+When Comp Agent is later offered as a hosted web service, the recommended shape is:
 
 ```http
 POST /jobs
@@ -87,7 +121,7 @@ POST /jobs/{job_id}/approve
 GET  /jobs/{job_id}/outputs
 ```
 
-The frontend should collect project inputs, start discovery, poll progress, render candidate comps for approval, submit selected comp IDs, and display output links after deck generation. The Comp Agent owns research, enrichment, repair, image handling, audit, and PPTX generation.
+This is documentation of the future seam, not something built today. A future hosted client would collect project inputs, start discovery, poll progress, render candidate comps for approval, submit selected comp IDs, and display output links after deck generation. Comp Agent owns research, enrichment, repair, image handling, audit, and PPTX generation.
 
 ## Output Structure
 
@@ -117,6 +151,6 @@ pytest
 
 ## Repository Notes
 
-- `.env` is ignored and should never be committed.
+- `.env`, `comp_agent.config.json`, and `comp_agent.env` are ignored and should never be committed. Real keys live only in the shared config on the office drive (or a local `.env` for dev).
 - Generated run folders such as `projects/` and `projects_ui/` are ignored.
-- This repo is backend-focused. The production frontend can live in a separate repo and call this agent over HTTP.
+- This repo is the whole product for the current phase: pipeline, local UI, launcher, and packaging. A hosted web service (and any separate client for it) is a later, additive phase.

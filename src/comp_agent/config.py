@@ -10,10 +10,11 @@ Precedence, FIRST HIT WINS per key:
 3. A config file next to the app: the executable directory when frozen under
    PyInstaller, otherwise the current working directory. Looks for
    ``comp_agent.config.json`` then ``comp_agent.env``.
-4. The shared network default on the office share (UNC path, not the ``X:``
-   drive letter): ``\\\\datafiles\\reference\\28_AI\\_AI AGENTS\\CompAgent\\`` —
-   ``comp_agent.config.json`` then ``comp_agent.env``. Probed with a short
-   timeout so an unreachable share can never hang startup.
+4. The shared network default on the office share (UNC path, not a drive
+   letter): ``\\\\datafiles\\reference\\28_AI\\Comparative Projects Deck Generator\\`` —
+   the key file ``API Key`` (then ``comp_agent.config.json`` / ``comp_agent.env``
+   as fallbacks). Probed with a short timeout so an unreachable share can never
+   hang startup.
 5. The repo-local ``.env`` (the existing dev fallback).
 
 Resolved values are written into ``os.environ`` ONLY for keys not already
@@ -39,10 +40,13 @@ CONFIG_PATH_ENV_VAR = "COMP_AGENT_CONFIG"
 # Filenames looked up next to the app (exe dir when frozen, else CWD).
 LOCAL_CONFIG_FILENAMES = ("comp_agent.config.json", "comp_agent.env")
 
-# Shared office default. Use the UNC form, NOT the X: drive-letter mapping —
-# drive letters differ per user/machine; the UNC path is the same for everyone.
-SHARED_CONFIG_DIR = r"\\datafiles\reference\28_AI\_AI AGENTS\CompAgent"
+# Shared office default: the deployment folder on the office share. Use the UNC
+# form, NOT a drive-letter mapping (R:/X: differ per user/machine; the UNC path
+# is the same for everyone). The key lives at the top level as a plainly-named
+# file "API Key" (KEY=VALUE format); the comp_agent.* names remain as fallbacks.
+SHARED_CONFIG_DIR = r"\\datafiles\reference\28_AI\Comparative Projects Deck Generator"
 SHARED_CONFIG_FILES = (
+    SHARED_CONFIG_DIR + r"\API Key",
     SHARED_CONFIG_DIR + r"\comp_agent.config.json",
     SHARED_CONFIG_DIR + r"\comp_agent.env",
 )

@@ -17,3 +17,6 @@ tmp_*.pptx
 
 # Local dev launcher (machine-specific python path)
 Start Comp Agent.cmd
+
+# Build venv for packaging (never commit)
+.venv-build/

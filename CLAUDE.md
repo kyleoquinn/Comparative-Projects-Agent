@@ -4,7 +4,7 @@ This file is read by Claude Code and (via symlink or copy as `AGENTS.md`) by Cod
 
 ## What this project is
 
-Comp Agent is a **standalone product** that produces comparative-projects research decks (PPTX + JSON artifacts) for real estate design work. The current phase is an **internal desktop distribution**: a PyInstaller onedir build launched from one shortcut on the office share (`X:\28_AI\_AI AGENTS`), which resolves the shared OpenAI key config over the network (UNC path, via `src/comp_agent/config.py`), starts a local server on `127.0.0.1`, and opens the built-in browser UI. A **hosted web service is a later phase** — the stage API, file artifacts, and local HTTP endpoints are the seam it will reuse, so keep them stable.
+Comp Agent is a **standalone product** that produces comparative-projects research decks (PPTX + JSON artifacts) for real estate design work. The current phase is an **internal desktop distribution**: a PyInstaller onedir build launched from one shortcut on the office share (`R:\28_AI\Comparative Projects Deck Generator`), which resolves the shared OpenAI key config over the network (UNC path, via `src/comp_agent/config.py`), starts a local server on `127.0.0.1`, and opens the built-in browser UI. A **hosted web service is a later phase** — the stage API, file artifacts, and local HTTP endpoints are the seam it will reuse, so keep them stable.
 
 This repo is **not** a hosted service, an orchestrator, or a general-purpose framework. Keep the scope narrow. See `docs/standalone_migration_plan.md` for the migration context.
 
@@ -49,6 +49,6 @@ This repo is **not** a hosted service, an orchestrator, or a general-purpose fra
 ## Environment notes
 
 - Python 3.10+, Windows + bash via Claude Code (use forward slashes).
-- Config/secrets resolve through the layered lookup in `src/comp_agent/config.py`: process env → `COMP_AGENT_CONFIG` file → app-adjacent `comp_agent.config.json`/`comp_agent.env` → shared UNC config (`\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\`, timeout-guarded) → repo-local `.env`. For dev, `OPENAI_API_KEY` in `.env` still works (see `.env.example`). Live search is optional — code falls back to placeholders when absent. Never log or print the key.
+- Config/secrets resolve through the layered lookup in `src/comp_agent/config.py`: process env → `COMP_AGENT_CONFIG` file → app-adjacent `comp_agent.config.json`/`comp_agent.env` → shared UNC config (`\\datafiles\reference\28_AI\Comparative Projects Deck Generator\CompAgent\`, timeout-guarded) → repo-local `.env`. For dev, `OPENAI_API_KEY` in `.env` still works (see `.env.example`). Live search is optional — code falls back to placeholders when absent. Never log or print the key.
 - Tests run with `pytest`; do not skip or `xfail` to make a change land.
 - Desktop packaging: `pip install -e .[packaging]`, then build `packaging/comp_agent.spec` per `packaging/DEPLOY.md`. Onedir, not onefile.

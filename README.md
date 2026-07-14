@@ -2,7 +2,7 @@
 
 Comp Agent is a standalone tool for producing client-facing comparative project decks. It discovers candidate comps, asks for approval, builds evidence packages for approved comps, validates image packages, and generates a standardized PowerPoint deck plus supporting JSON artifacts.
 
-The current distribution model is an **internal desktop app**: a packaged (PyInstaller onedir) build lives on the office share (`X:\28_AI\_AI AGENTS`), an architect double-clicks one shortcut, the launcher resolves the shared OpenAI key config over the network (UNC path), starts a local web server on `127.0.0.1`, and opens the browser to the built-in UI. Each user runs their own instance on their own machine — there is no hosted server.
+The current distribution model is an **internal desktop app**: a packaged (PyInstaller onedir) build lives on the office share (`R:\28_AI\Comparative Projects Deck Generator`), an architect double-clicks one shortcut, the launcher resolves the shared OpenAI key config over the network (UNC path), starts a local web server on `127.0.0.1`, and opens the browser to the built-in UI. Each user runs their own instance on their own machine — there is no hosted server.
 
 ```text
 Architect clicks shortcut on the share

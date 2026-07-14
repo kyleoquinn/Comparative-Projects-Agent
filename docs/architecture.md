@@ -10,11 +10,11 @@ are kept stable so that hosted mode is additive, not a rewrite.
 
 ```text
 Architect
-  -> shortcut on X:\28_AI\_AI AGENTS (share holds the onedir app folder)
+  -> shortcut on R:\28_AI\Comparative Projects Deck Generator (share holds the onedir app folder)
   -> launcher (comp_agent/app.py)
        -> layered config resolution (comp_agent/config.py):
           process env -> COMP_AGENT_CONFIG file -> app-adjacent config
-          -> shared UNC config (\\datafiles\reference\28_AI\_AI AGENTS\CompAgent\)
+          -> shared UNC config (\\datafiles\reference\28_AI\Comparative Projects Deck Generator\CompAgent\)
           -> repo-local .env (dev fallback)
        -> local server on 127.0.0.1 (stdlib ThreadingHTTPServer, free-port fallback)
        -> default browser opens the built-in single-page UI

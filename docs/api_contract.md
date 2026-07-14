@@ -48,7 +48,7 @@ payload — only key names and source paths.
   "layers": [
     {
       "layer": "shared",
-      "source": "\\\\datafiles\\reference\\28_AI\\_AI AGENTS\\CompAgent\\comp_agent.config.json",
+      "source": "\\\\datafiles\\reference\\28_AI\\Comparative Projects Deck Generator\\API Key",
       "status": "loaded",
       "format": "json",
       "keys_set": ["OPENAI_API_KEY"],

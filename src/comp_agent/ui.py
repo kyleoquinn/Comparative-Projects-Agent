@@ -305,7 +305,42 @@ def _run_approve(payload: dict[str, Any], default_output_root: str, update: JobU
             os.environ["COMP_AGENT_LIVE_SEARCH"] = previous_live_search
     strategy = _read_json_file(paths["deck_strategy"]) if "deck_strategy" in paths else {}
     progress("Deck package complete", 100)
-    return {"paths": {key: str(value) for key, value in paths.items()}, "deck_strategy": strategy}
+    result: dict[str, Any] = {
+        "paths": {key: str(value) for key, value in paths.items()},
+        "deck_strategy": strategy,
+    }
+    degraded = _degradation_status(paths)
+    if degraded:
+        result["live_search_status"] = degraded
+    return result
+
+
+def _degradation_status(paths: dict[str, Path]) -> dict[str, str] | None:
+    """Flag a deck built while OpenAI was out of credits (429 insufficient_quota).
+
+    The deck still generates from on-disk data, but enrichment/repair/image
+    calls fail, leaving fields, insights, and images thin — so the completion
+    screen should say so instead of implying a full result.
+    """
+    markers = ("insufficient_quota", "exceeded your current quota")
+    for key in ("repaired_comps", "enriched_comps", "comp_records_json", "field_repair_results"):
+        source = paths.get(key)
+        if not source:
+            continue
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if any(marker in text for marker in markers):
+            return {
+                "headline": "Deck Generated With Reduced Data",
+                "detail": (
+                    "OpenAI live search was unavailable (the account is out of credits), so some "
+                    "comp details, study-specific insights, and images may be missing or fewer than "
+                    "requested. Add credits and re-run for a complete deck."
+                ),
+            }
+    return None
 
 
 def _create_job(kind: str) -> str:
@@ -1690,7 +1725,8 @@ INDEX_HTML = r"""<!doctype html>
             <div>Deck structure</div><div>${escapeHtml(strategy.deck_title || 'Comp Study Deck')} · ${escapeHtml(strategy.project_type_label || '')}</div>
           </div>
         </div>`;
-        resultsEl.insertAdjacentHTML('afterbegin', outputHtml);
+        const degraded = data.live_search_status ? bannerHtml(data.live_search_status) : '';
+        resultsEl.insertAdjacentHTML('afterbegin', degraded + outputHtml);
       } catch (err) {
         const friendly = err.friendly || { headline: 'Deck Generation Failed', detail: (err.message || '').split('\n')[0].slice(0, 240) };
         setBusy(false, friendly.headline);

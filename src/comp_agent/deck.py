@@ -250,7 +250,7 @@ def _profile_slide(prs: Presentation, comp: dict[str, Any], index: int) -> None:
     _facts_card(slide, "Project Profile", _universal_fact_rows(comp), 8.05, 2.16, 5.05, 1.76, row_height=0.19, value_size=6)
     _facts_card(slide, "Study-Specific Insights", list(comp["adaptive_fields"].items())[:5], 8.05, 4.05, 5.05, 1.82, row_height=0.25, value_size=6, max_value_chars=110)
     _add_section_label(slide, "Relevance to Subject", 8.05, 6.03)
-    _add_text(slide, comp["relevance_to_subject"], 8.05, 6.25, 5.05, 0.42, size=9)
+    _add_text(slide, _fit(comp["relevance_to_subject"], 5.05, 0.42, 9), 8.05, 6.25, 5.05, 0.42, size=9)
     _add_text(slide, _sources_footer(comp), 0.55, 6.82, 11.85, 0.18, size=5, color=MUTED)
     _content_footer(slide, len(prs.slides))
 
@@ -360,7 +360,7 @@ def _takeaways_slide(prs: Presentation, deck_data: dict[str, Any]) -> None:
     slide = _blank_slide(prs)
     _slide_title(slide, "Project Positioning Takeaways", "Patterns across the approved comp set")
     summary = deck_data.get("takeaway_summary") or "The comp set points toward a small number of recurring market and design patterns."
-    _add_text(slide, summary, 0.55, 1.28, 7.35, 0.55, size=13, color=DARK)
+    _add_text(slide, _fit(summary, 7.35, 0.55, 13), 0.55, 1.28, 7.35, 0.55, size=13, color=DARK)
     _takeaway_trend_table(slide, deck_data.get("takeaways") or [], 0.55, 2.08, 11.85, 4.72)
     _content_footer(slide, len(prs.slides))
 
@@ -713,11 +713,54 @@ def _normalize_value_text(text: Any) -> str:
     return " ".join(str(text).replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
 
 
-def _truncate_for_display(text: Any, max_chars: int) -> str:
+def _fit_chars(width_in: float, height_in: float, font_pt: float, safety: float = 0.9) -> int:
+    """Approximate how many characters fit in a text box of the given size.
+
+    Assumes a proportional sans-serif (average glyph advance ~0.52 x the font
+    size) and ~1.2x line spacing. Deliberately conservative (``safety`` < 1) so
+    copy is trimmed to fit rather than clipped mid-sentence by PowerPoint.
+    """
+    if width_in <= 0 or height_in <= 0 or font_pt <= 0:
+        return 0
+    chars_per_line = (width_in * 72.0) / (font_pt * 0.52)
+    # Count only WHOLE lines — a partial line at the bottom would clip, which is
+    # exactly what we're avoiding.
+    lines = max(1, int((height_in * 72.0) / (font_pt * 1.2)))
+    return max(1, int(chars_per_line * lines * safety))
+
+
+def _smart_trim(text: Any, budget: int) -> str:
+    """Trim to ~``budget`` chars WITHOUT cutting mid-sentence or mid-word.
+
+    Prefers to end on a sentence terminator; failing that, ends on a word
+    boundary with an ellipsis. Whitespace is normalized first.
+    """
     s = _normalize_value_text(text)
-    if len(s) <= max_chars:
+    if budget <= 0 or len(s) <= budget:
         return s
-    return s[: max(1, max_chars - 1)].rstrip() + "…"
+    window = s[:budget]
+    # 1) End cleanly at the last sentence terminator well into the window.
+    sentence_end = -1
+    for i, ch in enumerate(window):
+        if ch in ".!?" and (i + 1 >= len(window) or window[i + 1] == " "):
+            sentence_end = i
+    if sentence_end >= int(budget * 0.55):
+        return window[: sentence_end + 1].rstrip()
+    # 2) Otherwise cut at the last word boundary and mark it with an ellipsis.
+    space = window.rfind(" ")
+    if space >= int(budget * 0.4):
+        return window[:space].rstrip() + "…"
+    # 3) Last resort: hard trim.
+    return window.rstrip() + "…"
+
+
+def _fit(text: Any, width_in: float, height_in: float, font_pt: float, safety: float = 0.9) -> str:
+    """Trim ``text`` to fit a box of the given dimensions — never chopped mid-sentence."""
+    return _smart_trim(text, _fit_chars(width_in, height_in, font_pt, safety))
+
+
+def _truncate_for_display(text: Any, max_chars: int) -> str:
+    return _smart_trim(text, max_chars)
 
 
 def _facts_card(

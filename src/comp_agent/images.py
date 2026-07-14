@@ -17,6 +17,10 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 SOURCE_PAGE_LIMIT = 3
 IMAGE_CANDIDATE_LIMIT = 18
+# Cap real network downloads per comp (3 slots x a few tries) so a comp with
+# many broken/low-quality URLs — or a slow/blocked network — can't stall the
+# deck-generation stage.
+_MAX_IMAGE_DOWNLOADS_PER_COMP = 12
 IMAGE_CANDIDATES_PER_PAGE = 10
 
 
@@ -158,10 +162,18 @@ def _download_image_slots(
     selected: dict[str, dict[str, Any]] = {}
     seen_urls: set[str] = set()
     fingerprints: list[int] = []
+    # Hard cap on real network downloads per comp so a comp with many broken or
+    # low-quality candidate URLs (or a slow/blocked network) can't stall the
+    # generation stage for a long time.
+    attempts = 0
     ranked = sorted(candidates, key=lambda candidate: _candidate_rank(candidate), reverse=True)
     for slot in ("overall", "focus", "detail"):
+        if attempts >= _MAX_IMAGE_DOWNLOADS_PER_COMP:
+            break
         for candidate in ranked:
             if slot in selected:
+                break
+            if attempts >= _MAX_IMAGE_DOWNLOADS_PER_COMP:
                 break
             url = str(candidate.get("url") or "")
             if not _could_be_direct_image(url):
@@ -175,6 +187,7 @@ def _download_image_slots(
                 continue
             seen_urls.add(normalized_url)
             item["attempted_urls"].append(url)
+            attempts += 1
             try:
                 path = _download_image(url, folder / f"comp_{index:02d}_{slot}_{slugify(comp.get('project_name', 'hero'))[:42]}")
                 if not _validate_image_quality(path):
@@ -412,7 +425,7 @@ def _download_page(url: str) -> str:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:
             content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
             data = response.read(MAX_PAGE_BYTES + 1)
     except (urllib.error.URLError, TimeoutError, ValueError) as error:
@@ -467,7 +480,7 @@ def _image_request_headers(url: str) -> dict[str, str]:
 def _download_image(url: str, base_path: Path) -> Path:
     request = urllib.request.Request(url, headers=_image_request_headers(url))
     try:
-        with urllib.request.urlopen(request, timeout=25) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
             data = response.read(MAX_IMAGE_BYTES + 1)
     except (urllib.error.URLError, TimeoutError, ValueError) as error:
@@ -502,25 +515,35 @@ def _download_image(url: str, base_path: Path) -> Path:
     return path
 
 
+# Relaxed image-quality floors. Web-optimized project photos are routinely
+# small (20-40 KB) and served at constrained widths (e.g. magazine CDNs at
+# ?w=493); the previous 50 KB / 400x300 floors rejected many legitimate hero
+# images and left comps with no photos. Kept just high enough to still reject
+# icons/thumbnails/tracking pixels.
+_MIN_IMAGE_WIDTH = 280
+_MIN_IMAGE_HEIGHT = 180
+_MIN_IMAGE_QUALITY_BYTES = 12 * 1024  # 12 KB
+
+
 def _validate_image_quality(image_path: Path) -> bool:
     """Basic image quality validation to ensure usable hero images."""
     try:
         with Image.open(image_path) as img:
             width, height = img.size
-            
+
             # Minimum dimensions for hero images
-            if width < 400 or height < 300:
+            if width < _MIN_IMAGE_WIDTH or height < _MIN_IMAGE_HEIGHT:
                 return False
-                
-            # Minimum aspect ratio checks (not too narrow)
+
+            # Aspect ratio sanity (not a banner/sliver)
             aspect_ratio = width / height
             if aspect_ratio < 0.3 or aspect_ratio > 5.0:
                 return False
-                
-            # File size check (not too small, likely thumbnail)
-            if image_path.stat().st_size < 50 * 1024:  # 50KB minimum
+
+            # File-size floor (reject icons/thumbnails/pixels, not real photos)
+            if image_path.stat().st_size < _MIN_IMAGE_QUALITY_BYTES:
                 return False
-                
+
         return True
     except Exception:
         return False

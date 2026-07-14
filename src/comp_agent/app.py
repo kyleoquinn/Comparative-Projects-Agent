@@ -33,7 +33,7 @@ PREFERRED_PORT = 8765
 
 # Fallback when package metadata is unavailable (e.g. a frozen build whose
 # dist-info was not bundled). Keep in sync with pyproject.toml.
-_FALLBACK_VERSION = "1.0.0"
+_FALLBACK_VERSION = "1.0.1"
 
 
 def get_version() -> str:
